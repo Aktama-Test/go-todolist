@@ -18,6 +18,7 @@ jobs:
         uses: depot/build-push-action@v1
         with:
           context: .
+          token: ${{ secrets.DEPOT_TOKEN }}
           secrets: |
             "DEPOT_TOKEN=${{ secrets.DEPOT_TOKEN }}"
           save: true
