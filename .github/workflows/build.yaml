@@ -22,3 +22,6 @@ jobs:
           secrets: |
             "DEPOT_TOKEN=${{ secrets.DEPOT_TOKEN }}"
           save: true
+          save-tags: |
+            latest
+            ${{ github.sha }}
