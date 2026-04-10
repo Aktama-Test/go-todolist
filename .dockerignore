@@ -9,6 +9,8 @@ go-todolist
 # Git
 .git/
 .gitignore
+.github/
+.depot/
 
 # IDE
 .idea/
