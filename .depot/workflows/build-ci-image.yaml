@@ -1,0 +1,24 @@
+# Depot CI Migration
+# Source: .github/workflows/build.yaml
+#
+# No changes were necessary.
+
+name: Build CI Image
+on: push
+jobs:
+  build-ci-image:
+    runs-on: depot-ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          clean: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.2'
+      - uses: depot/setup-action@v1
+      - uses: depot/snapshot-action@v1
+        with:
+          image: t67llm9p7m.registry.depot.dev/my-ci-image:latest
