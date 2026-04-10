@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Todo List</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Todo List</h1>
+
+        <form class="add-form"
+              hx-post="/todos"
+              hx-target="#todo-list"
+              hx-swap="afterbegin"
+              hx-on::after-request="if(event.detail.successful) this.reset()">
+            <div class="form-row">
+                <input type="text" name="title" placeholder="What needs to be done?" required>
+                <select name="priority">
+                    <option value="low">Low</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High</option>
+                </select>
+                <button type="submit" class="btn btn-add">Add</button>
+            </div>
+            <input type="text" name="description" placeholder="Description (optional)" class="form-description">
+        </form>
+
+        <div class="filters"
+             hx-get="/todos"
+             hx-target="#todo-list"
+             hx-trigger="change"
+             hx-include="[name='filter_status'],[name='filter_priority']">
+            <select name="filter_status">
+                <option value="">All</option>
+                <option value="active">Active</option>
+                <option value="completed">Completed</option>
+            </select>
+            <select name="filter_priority">
+                <option value="">Any Priority</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+            </select>
+        </div>
+
+        <div id="todo-list">
+            {{template "todo_list" .Todos}}
+        </div>
+    </div>
+</body>
+</html>

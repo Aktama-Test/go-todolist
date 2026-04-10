@@ -1,0 +1,22 @@
+# Binary
+go-todolist
+
+# Database
+*.db
+*.db-wal
+*.db-shm
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Docs
+README.md
+LICENSE

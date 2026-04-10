@@ -1,0 +1,28 @@
+{{define "todo_item"}}
+<div id="todo-{{.ID}}" class="todo-item {{if .Completed}}completed{{end}} priority-{{.Priority}}">
+    <div class="todo-content">
+        <div class="todo-header">
+            <span class="todo-title">{{.Title}}</span>
+            <span class="badge priority-badge">{{.Priority}}</span>
+        </div>
+        {{if .Description}}
+        <p class="todo-description">{{.Description}}</p>
+        {{end}}
+    </div>
+    <div class="todo-actions">
+        <button class="btn btn-toggle"
+                hx-patch="/todos/{{.ID}}/toggle"
+                hx-target="#todo-{{.ID}}"
+                hx-swap="outerHTML">
+            {{if .Completed}}Undo{{else}}Done{{end}}
+        </button>
+        <button class="btn btn-delete"
+                hx-delete="/todos/{{.ID}}"
+                hx-target="#todo-{{.ID}}"
+                hx-swap="outerHTML"
+                hx-confirm="Delete this todo?">
+            Delete
+        </button>
+    </div>
+</div>
+{{end}}
