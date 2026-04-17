@@ -1,0 +1,48 @@
+{{define "list_item"}}
+<div class="list-item" id="list-{{.List.ID}}">
+    <div id="list-view-{{.List.ID}}">
+        <a href="/?list_id={{.List.ID}}"
+           class="list-tab {{if eq .List.ID .CurrentListID}}active{{end}}"
+           hx-get="/?list_id={{.List.ID}}"
+           hx-target="body"
+           hx-push-url="true">
+            {{.List.Name}}
+        </a>
+    </div>
+    <div class="list-actions">
+        {{if ne .List.ID 1}}
+        <button class="btn btn-icon"
+                onclick="document.getElementById('list-view-{{.List.ID}}').style.display='none'; document.getElementById('list-edit-{{.List.ID}}').style.display='block';">
+            ✎
+        </button>
+        <button class="btn btn-icon btn-delete"
+                hx-delete="/lists/{{.List.ID}}"
+                hx-target="#list-{{.List.ID}}"
+                hx-swap="outerHTML"
+                hx-confirm="Delete '{{.List.Name}}' and all its todos?"
+                hx-on::after-request="if(event.detail.successful) window.location.href='/'">
+            ×
+        </button>
+        {{else}}
+        <button class="btn btn-icon"
+                onclick="document.getElementById('list-view-{{.List.ID}}').style.display='none'; document.getElementById('list-edit-{{.List.ID}}').style.display='block';">
+            ✎
+        </button>
+        {{end}}
+    </div>
+    <div id="list-edit-{{.List.ID}}" class="edit-list-form" style="display: none;">
+        <input type="text" value="{{.List.Name}}" id="edit-name-{{.List.ID}}" />
+        <button class="btn btn-save"
+                hx-patch="/lists/{{.List.ID}}"
+                hx-target="#list-{{.List.ID}}"
+                hx-swap="outerHTML"
+                hx-vals='js:{"name": document.getElementById("edit-name-{{.List.ID}}").value}'>
+            ✓
+        </button>
+        <button class="btn btn-cancel"
+                onclick="document.getElementById('list-view-{{.List.ID}}').style.display='block'; document.getElementById('list-edit-{{.List.ID}}').style.display='none';">
+            ✕
+        </button>
+    </div>
+</div>
+{{end}}

@@ -1,0 +1,22 @@
+{{define "list_selector"}}
+<div class="list-selector">
+    <h2>My Lists</h2>
+    <div class="list-tabs" id="list-tabs">
+        {{range .Lists}}
+        {{template "list_item" (dict "List" . "CurrentListID" $.CurrentListID)}}
+        {{end}}
+    </div>
+    <div class="new-list-form">
+        <input type="text" id="new-list-name" placeholder="New list name..." />
+        <button class="btn btn-create-list"
+                hx-post="/lists"
+                hx-target="#list-tabs"
+                hx-swap="beforeend"
+                hx-include="[id='new-list-name']"
+                hx-vals='js:{"name": document.getElementById("new-list-name").value}'
+                hx-on::after-request="if(event.detail.successful) document.getElementById('new-list-name').value = ''">
+            + New List
+        </button>
+    </div>
+</div>
+{{end}}

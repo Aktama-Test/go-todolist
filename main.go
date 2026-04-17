@@ -32,7 +32,24 @@ func main() {
 		log.Fatal("failed to get default list:", err)
 	}
 
-	tmpl := template.Must(template.ParseFS(content, "templates/*.html", "templates/partials/*.html"))
+	// Create template with custom functions
+	tmpl := template.New("").Funcs(template.FuncMap{
+		"dict": func(values ...interface{}) map[string]interface{} {
+			if len(values)%2 != 0 {
+				panic("dict requires an even number of arguments")
+			}
+			dict := make(map[string]interface{}, len(values)/2)
+			for i := 0; i < len(values); i += 2 {
+				key, ok := values[i].(string)
+				if !ok {
+					panic("dict keys must be strings")
+				}
+				dict[key] = values[i+1]
+			}
+			return dict
+		},
+	})
+	tmpl = template.Must(tmpl.ParseFS(content, "templates/*.html", "templates/partials/*.html"))
 
 	r := gin.Default()
 	r.SetHTMLTemplate(tmpl)
@@ -44,11 +61,19 @@ func main() {
 	r.StaticFS("/static", http.FS(staticFS))
 
 	h := handler.New(repo, tmpl, defaultList.ID)
+
+	// Todo routes
 	r.GET("/", h.Index)
 	r.GET("/todos", h.List)
 	r.POST("/todos", h.Create)
 	r.PATCH("/todos/:id/toggle", h.Toggle)
 	r.DELETE("/todos/:id", h.Delete)
+
+	// List management routes
+	r.GET("/lists", h.GetLists)
+	r.POST("/lists", h.CreateList)
+	r.PATCH("/lists/:id", h.UpdateList)
+	r.DELETE("/lists/:id", h.DeleteList)
 
 	srv := &http.Server{
 		Addr:    ":8080",

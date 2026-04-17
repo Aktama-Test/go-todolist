@@ -11,11 +11,14 @@
     <div class="container">
         <h1>Todo List</h1>
 
+        {{template "list_selector" .}}
+
         <form class="add-form"
               hx-post="/todos"
               hx-target="#todo-list"
               hx-swap="afterbegin"
               hx-on::after-request="if(event.detail.successful) this.reset()">
+            <input type="hidden" name="list_id" value="{{.CurrentListID}}">
             <div class="form-row">
                 <input type="text" name="title" placeholder="What needs to be done?" required>
                 <select name="priority">
@@ -32,7 +35,8 @@
              hx-get="/todos"
              hx-target="#todo-list"
              hx-trigger="change"
-             hx-include="[name='filter_status'],[name='filter_priority']">
+             hx-include="[name='filter_status'],[name='filter_priority']"
+             hx-vals='{"list_id": "{{.CurrentListID}}"}'>
             <select name="filter_status">
                 <option value="">All</option>
                 <option value="active">Active</option>

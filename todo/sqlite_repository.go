@@ -88,6 +88,80 @@ func (r *SQLiteRepository) GetDefaultList() (*List, error) {
 	return &l, nil
 }
 
+func (r *SQLiteRepository) GetAllLists() ([]List, error) {
+	rows, err := r.db.Query("SELECT id, name, created_at FROM lists ORDER BY created_at ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var lists []List
+	for rows.Next() {
+		var l List
+		if err := rows.Scan(&l.ID, &l.Name, &l.CreatedAt); err != nil {
+			return nil, err
+		}
+		lists = append(lists, l)
+	}
+	return lists, rows.Err()
+}
+
+func (r *SQLiteRepository) GetList(id int64) (*List, error) {
+	var l List
+	err := r.db.QueryRow("SELECT id, name, created_at FROM lists WHERE id = ?", id).
+		Scan(&l.ID, &l.Name, &l.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("list %d not found", id)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &l, nil
+}
+
+func (r *SQLiteRepository) UpdateList(id int64, name string) (*List, error) {
+	if id == 1 {
+		// Allow renaming the default list
+	}
+	result, err := r.db.Exec("UPDATE lists SET name = ? WHERE id = ?", name, id)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if rows == 0 {
+		return nil, fmt.Errorf("list %d not found", id)
+	}
+	return r.GetList(id)
+}
+
+func (r *SQLiteRepository) DeleteList(id int64) error {
+	if id == 1 {
+		return fmt.Errorf("cannot delete the default list")
+	}
+
+	// Delete all todos in the list first
+	if _, err := r.db.Exec("DELETE FROM todos WHERE list_id = ?", id); err != nil {
+		return err
+	}
+
+	// Delete the list
+	result, err := r.db.Exec("DELETE FROM lists WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("list %d not found", id)
+	}
+	return nil
+}
+
 func (r *SQLiteRepository) Create(listID int64, title, description string, priority Priority) (*Todo, error) {
 	now := time.Now()
 	result, err := r.db.Exec(
