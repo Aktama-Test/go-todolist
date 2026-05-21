@@ -44,4 +44,7 @@
             context: .
             file: Dockerfile
             outputs: type=tar,dest=/tmp/node24-smoke-${{ matrix.runner }}.tar
-            tags: node24-smoke:${{ github.run_id }}-${{ matrix.runner }}
+            save: true
+            save-tags: |
+              node24-smoke-${{ github.run_id }}-${{ matrix.runner }}
+              node24-smoke-${{ github.run_id }}-${{ matrix.runner }}-${{ github.run_attempt }}
