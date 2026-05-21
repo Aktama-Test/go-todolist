@@ -1,0 +1,45 @@
+  name: build-push-action Node 24 smoke
+
+  on:
+    workflow_dispatch:
+
+  jobs:
+    smoke:
+      strategy:
+        fail-fast: false
+        matrix:
+          runner:
+            - depot-ubuntu-24.04-4
+
+      runs-on: ${{ matrix.runner }}
+
+      permissions:
+        contents: read
+        id-token: write
+
+      steps:
+        - name: Create smoke Dockerfile
+          run: |
+            cat > Dockerfile <<'EOF'
+            FROM alpine:3.20
+            RUN echo node24-smoke > /smoke.txt
+            EOF
+
+        - name: Checkout build-push-action PR
+          uses: actions/checkout@v4
+          with:
+            repository: depot/build-push-action
+            ref: 2db929fa768ebb3ad332ae8fc530412bf0964782
+
+        - name: Set up Depot CLI
+          uses: depot/setup-action@v1
+
+        - name: Run PR action
+          uses: ./build-push-action
+          with:
+            project: 2mtnv574xd
+            token: ${{ secrets.DEPOT_TOKEN }}
+            context: .
+            file: Dockerfile
+            save: true
+            save-tag: node24-smoke-${{ github.run_id }}-${{ matrix.runner }}-${{ github.run_attempt }}
