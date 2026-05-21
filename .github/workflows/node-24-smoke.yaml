@@ -39,8 +39,7 @@
         - name: Run PR action
           uses: ./build-push-action
           with:
-            project: ${{ vars.DEPOT_PROJECT_ID }}
-            token: ${{ secrets.DEPOT_TOKEN }}
+            project: 2mtnv574xd
             context: .
             file: Dockerfile
             outputs: type=tar,dest=/tmp/node24-smoke-${{ matrix.runner }}.tar
