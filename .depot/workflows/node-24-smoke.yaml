@@ -18,6 +18,9 @@
         id-token: write
 
       steps:
+        - name: Checkout smoke repo
+          uses: actions/checkout@v4
+
         - name: Create smoke Dockerfile
           run: |
             cat > Dockerfile <<'EOF'
@@ -30,6 +33,7 @@
           with:
             repository: depot/build-push-action
             ref: 2db929fa768ebb3ad332ae8fc530412bf0964782
+            path: build-push-action
 
         - name: Set up Depot CLI
           uses: depot/setup-action@v1
