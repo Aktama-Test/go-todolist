@@ -40,6 +40,7 @@
           uses: ./build-push-action
           with:
             project: 2mtnv574xd
+            token: ${{ secrets.DEPOT_TOKEN }}
             context: .
             file: Dockerfile
             outputs: type=tar,dest=/tmp/node24-smoke-${{ matrix.runner }}.tar
