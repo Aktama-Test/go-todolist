@@ -5,5 +5,5 @@
 
   jobs:
     call-reusable:
-      uses: ./.depot/workflows/reusable.yml
+      uses: ./.depot/workflows/reusable.yaml
       timeout-minutes: 60
