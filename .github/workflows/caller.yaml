@@ -5,6 +5,5 @@ on:
 
 jobs:
   call-reusable:
-    runs-on: ubuntu-latest
     uses: ./.github/workflows/reusable.yaml
     timeout-minutes: 60
