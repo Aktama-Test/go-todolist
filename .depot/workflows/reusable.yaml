@@ -1,0 +1,12 @@
+  name: Reusable
+
+  on:
+    workflow_call: {}
+
+  jobs:
+    inner-job:
+      runs-on: ubuntu-latest
+      timeout-minutes: 1
+      steps:
+        - name: Sleep past timeout
+          run: sleep 300

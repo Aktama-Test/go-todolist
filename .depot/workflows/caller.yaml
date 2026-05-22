@@ -1,0 +1,9 @@
+  name: Caller
+
+  on:
+    workflow_dispatch: {}
+
+  jobs:
+    call-reusable:
+      uses: ./.depot/workflows/reusable.yml
+      timeout-minutes: 60
