@@ -1,0 +1,90 @@
+  name: Verify tar-extracts-zip on Depot Windows runner
+
+  on:
+    workflow_dispatch:
+
+  jobs:
+    pwsh:
+      runs-on: depot-windows-2025-4
+      defaults:
+        run:
+          shell: pwsh
+      steps:
+        - name: tar version
+          run: tar --version
+
+        - name: which tar
+          run: (Get-Command tar).Source
+
+        - name: PATH
+          run: $env:PATH -split ';'
+
+        - name: Download Windows zip from depot/cli releases
+          run: |
+            New-Item -ItemType Directory -Force -Path C:\zip-test | Out-Null
+            Invoke-WebRequest `
+              -Uri https://github.com/depot/cli/releases/download/v2.101.64/depot_2.101.64_windows_amd64.zip `
+              -OutFile C:\zip-test\depot.zip
+
+        - name: Extract with `tar xz -f` (mirrors @actions/tool-cache extractTar)
+          run: |
+            New-Item -ItemType Directory -Force -Path C:\zip-test\out | Out-Null
+            tar xz -C C:\zip-test\out -f C:\zip-test\depot.zip
+            if ($LASTEXITCODE -ne 0) { throw "tar exited $LASTEXITCODE" }
+
+        - name: List extracted files
+          run: Get-ChildItem -Recurse C:\zip-test\out
+
+        - name: Confirm depot.exe is a Windows PE binary (MZ header)
+          run: |
+            $exe = "C:\zip-test\out\bin\depot.exe"
+            if (-not (Test-Path $exe)) { throw "depot.exe not found at $exe" }
+            $bytes = [System.IO.File]::ReadAllBytes($exe)[0..1]
+            $hex = ($bytes | ForEach-Object { $_.ToString('X2') }) -join ''
+            Write-Host "First two bytes: $hex (expect 4D5A for PE/MZ)"
+            if ($hex -ne '4D5A') { throw "Not a PE binary (got $hex)" }
+
+        - name: Run depot --version
+          run: C:\zip-test\out\bin\depot.exe --version
+
+    bash:
+      runs-on: depot-windows-2025-4
+      defaults:
+        run:
+          shell: bash
+      steps:
+        - name: tar version
+          run: tar --version
+
+        - name: which tar
+          run: which tar
+
+        - name: PATH
+          run: echo "$PATH" | tr ':' '\n'
+
+        - name: Download Windows zip
+          run: |
+            mkdir -p /c/zip-test
+            curl -sL -o /c/zip-test/depot.zip \
+              https://github.com/depot/cli/releases/download/v2.101.64/depot_2.101.64_windows_amd64.zip
+
+        - name: Extract with `tar xz -f`
+          run: |
+            mkdir -p /c/zip-test/out
+            tar xz -C /c/zip-test/out -f /c/zip-test/depot.zip
+
+        - name: List extracted files
+          run: ls -laR /c/zip-test/out
+
+        - name: Confirm depot.exe is a Windows PE binary
+          run: |
+            exe=/c/zip-test/out/bin/depot.exe
+            test -f "$exe" || { echo "missing $exe"; exit 1; }
+            head -c 2 "$exe" | od -An -c | tr -d ' \n'
+            echo
+            magic=$(head -c 2 "$exe" | od -An -t x1 | tr -d ' \n')
+            echo "magic=$magic (expect 4d5a for PE)"
+            [ "$magic" = "4d5a" ] || { echo "Not a PE binary"; exit 1; }
+
+        - name: Run depot --version
+          run: /c/zip-test/out/bin/depot.exe --version
