@@ -1,0 +1,33 @@
+name: Repro T-8694 tool_cache perms
+on:
+  workflow_dispatch:
+jobs:
+  repro:
+    runs-on: depot-ubuntu-latest-4
+    steps:
+      - name: Inspect (untouched)
+        run: |
+          echo "RUNNER_TOOL_CACHE=$RUNNER_TOOL_CACHE"
+          echo "whoami=$(whoami) uid=$(id -u) gid=$(id -g)"
+          echo "--- parents ---"
+          for p in /home/runner /home/runner/work /home/runner/work/tmp "$RUNNER_TOOL_CACHE"; do
+            ls -ld "$p" 2>&1 || echo "  (missing) $p"
+          done
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@7c071dfe9dc99bdf297fa79cb49ea005b9fcadbc
+        with:
+          php-version: "7.4"
+          extensions: pdo_mysql, bcmath, zip, gd, exif, mcrypt
+
+      - name: Inspect (post setup-php)
+        run: |
+          echo "--- RUNNER_TOOL_CACHE ownership and contents ---"
+          stat -c '%n  %U:%G  %a' "$RUNNER_TOOL_CACHE"
+          ls -lan "$RUNNER_TOOL_CACHE"
+
+      - name: Repro the failing mkdir as runner
+        run: |
+          mkdir -p "$RUNNER_TOOL_CACHE/snapshot" \
+            && echo "OK (T-8694 NOT reproduced)" \
+            || echo "EACCES (T-8694 reproduced)"
