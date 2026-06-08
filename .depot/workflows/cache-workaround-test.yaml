@@ -1,0 +1,68 @@
+name: cache-workaround-test (Depot CI)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [test/composite-in-container]
+
+jobs:
+  producer:
+    runs-on: depot-ubuntu-latest
+    container:
+      image: ubuntu:24.04
+    steps:
+      - name: install prereqs
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends coreutils
+      - name: generate ~190MB random blob
+        shell: bash
+        run: |
+          mkdir -p /tmp/cache-test
+          dd if=/dev/urandom of=/tmp/cache-test/blob bs=1M count=190
+          ls -la /tmp/cache-test/blob
+          sha256sum /tmp/cache-test/blob | tee /tmp/cache-test/blob.sha256
+          echo "--- size in bytes ---"
+          stat -c '%s' /tmp/cache-test/blob
+      - name: save to cache
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/cache-test
+          key: cache-workaround-test-${{ github.run_id }}
+
+  consumer:
+    runs-on: depot-ubuntu-latest
+    needs: producer
+    container:
+      image: ubuntu:24.04
+    steps:
+      - name: install prereqs
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends coreutils
+      - name: restore from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/cache-test
+          key: cache-workaround-test-${{ github.run_id }}
+          fail-on-cache-miss: true
+      - name: verify size and checksum
+        shell: bash
+        run: |
+          echo "=== restored blob ==="
+          ls -la /tmp/cache-test/blob
+          echo "--- size in bytes ---"
+          stat -c '%s' /tmp/cache-test/blob
+          echo "--- recomputing checksum ---"
+          ACTUAL=$(sha256sum /tmp/cache-test/blob | awk '{print $1}')
+          EXPECTED=$(awk '{print $1}' /tmp/cache-test/blob.sha256)
+          echo "expected: $EXPECTED"
+          echo "actual:   $ACTUAL"
+          if [ "$ACTUAL" = "$EXPECTED" ]; then
+            echo "SHA matches"
+          else
+            echo "SHA MISMATCH"
+            exit 1
+          fi
