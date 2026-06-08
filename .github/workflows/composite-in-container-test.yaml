@@ -1,0 +1,46 @@
+name: composite-in-container-test (GHA)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [test/composite-in-container]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+    steps:
+      - name: install prereqs
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends curl ca-certificates
+      - name: env before
+        shell: bash
+        run: |
+          echo "=== BEFORE setup-rust-toolchain ==="
+          id
+          echo "HOME=$HOME"
+          echo "PWD=$(pwd)"
+          echo "PATH=$PATH"
+          ls -la "$HOME" || true
+          ls /home/runner/.cargo 2>/dev/null && echo "HOST /home/runner/.cargo VISIBLE in container" || echo "host /home/runner/.cargo not visible"
+          command -v cargo || echo "no cargo on PATH"
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+      - name: env after
+        shell: bash
+        run: |
+          echo "=== AFTER setup-rust-toolchain ==="
+          id
+          echo "HOME=$HOME"
+          echo "PWD=$(pwd)"
+          echo "PATH=$PATH"
+          ls -la "$HOME" || true
+          ls -la "$HOME/.cargo/bin" 2>/dev/null || echo "no .cargo/bin in HOME"
+          ls /home/runner/.cargo/bin 2>/dev/null && echo "HOST /home/runner/.cargo/bin VISIBLE in container" || echo "host /home/runner/.cargo/bin not visible"
+          command -v cargo && cargo --version || echo "cargo NOT on PATH"
+          echo "--- find any cargo binary on this filesystem ---"
+          find / -name cargo -type f 2>/dev/null | head -20
