@@ -1,4 +1,4 @@
-name: artifact-in-container-test (Depot CI)
+name: artifact-in-container-test rosjazzy (Depot CI)
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ jobs:
   producer:
     runs-on: depot-ubuntu-latest
     container:
-      image: ubuntu:24.04
+      image: ros:jazzy
     steps:
       - name: install prereqs
         shell: bash
@@ -28,7 +28,7 @@ jobs:
       - name: upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: artifact-test-blob
+          name: artifact-test-blob-rosjazzy
           path: /tmp/artifact-test
           retention-days: 1
 
@@ -36,7 +36,7 @@ jobs:
     runs-on: depot-ubuntu-latest
     needs: producer
     container:
-      image: ubuntu:24.04
+      image: ros:jazzy
     steps:
       - name: install prereqs
         shell: bash
@@ -46,7 +46,7 @@ jobs:
       - name: download artifact
         uses: actions/download-artifact@v4
         with:
-          name: artifact-test-blob
+          name: artifact-test-blob-rosjazzy
           path: /tmp/artifact-test
       - name: verify size and checksum
         shell: bash
