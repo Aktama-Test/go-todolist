@@ -1,0 +1,42 @@
+name: composite-workaround-test (Depot CI)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [test/composite-in-container]
+
+jobs:
+  test:
+    runs-on: depot-ubuntu-latest
+    container:
+      image: ubuntu:24.04
+    steps:
+      - name: install prereqs
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends curl ca-certificates
+      - name: install rust inline (workaround for composite-action bug)
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: env after
+        shell: bash
+        run: |
+          echo "=== AFTER inline rustup install ==="
+          id
+          echo "HOME=$HOME"
+          echo "PWD=$(pwd)"
+          echo "PATH=$PATH"
+          ls -la "$HOME" || true
+          ls -la "$HOME/.cargo/bin" 2>/dev/null || echo "no .cargo/bin in HOME"
+          command -v cargo && cargo --version || echo "cargo NOT on PATH"
+          echo "--- find any cargo binary on this filesystem ---"
+          find / -name cargo -type f 2>/dev/null | head -20
+      - name: actually use cargo
+        shell: bash
+        run: |
+          cargo --version
+          mkdir -p /tmp/hello && cd /tmp/hello && cargo init --name hello && cargo build
