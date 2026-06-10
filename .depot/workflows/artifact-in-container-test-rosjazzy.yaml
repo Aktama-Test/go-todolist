@@ -11,6 +11,7 @@ jobs:
     container:
       image: ros:jazzy
     steps:
+      - uses: actions/checkout@v5
       - name: install prereqs
         shell: bash
         run: |
@@ -19,20 +20,19 @@ jobs:
       - name: generate ~190MB random blob
         shell: bash
         run: |
-          mkdir -p ${{ runner.temp }}/artifact-test
-          dd if=/dev/urandom of=${{ runner.temp }}/artifact-test/blob bs=1M count=190
-          ls -la ${{ runner.temp }}/artifact-test/blob
-          sha256sum ${{ runner.temp }}/artifact-test/blob | tee ${{ runner.temp }}/artifact-test/blob.sha256
+          mkdir -p artifact-test
+          dd if=/dev/urandom of=artifact-test/blob bs=1M count=190
+          ls -la artifact-test/blob
+          sha256sum artifact-test/blob | tee artifact-test/blob.sha256
           echo "--- size in bytes ---"
-          stat -c '%s' ${{ runner.temp }}/artifact-test/blob
+          stat -c '%s' artifact-test/blob
       - name: upload artifact
         uses: pyTooling/upload-artifact@v6
         with:
           name: artifact-test-blob-rosjazzy
-          working-directory: ${{ runner.temp }}/artifact-test
           path: |
-            blob
-            blob.sha256
+            artifact-test/blob
+            artifact-test/blob.sha256
           retention-days: 1
 
   consumer:
@@ -41,6 +41,7 @@ jobs:
     container:
       image: ros:jazzy
     steps:
+      - uses: actions/checkout@v5
       - name: install prereqs
         shell: bash
         run: |
@@ -50,17 +51,16 @@ jobs:
         uses: pyTooling/download-artifact@v7
         with:
           name: artifact-test-blob-rosjazzy
-          path: ${{ runner.temp }}/artifact-test
       - name: verify size and checksum
         shell: bash
         run: |
           echo "=== restored blob ==="
-          ls -la ${{ runner.temp }}/artifact-test/blob
+          ls -la artifact-test/blob
           echo "--- size in bytes ---"
-          stat -c '%s' ${{ runner.temp }}/artifact-test/blob
+          stat -c '%s' artifact-test/blob
           echo "--- recomputing checksum ---"
-          ACTUAL=$(sha256sum ${{ runner.temp }}/artifact-test/blob | awk '{print $1}')
-          EXPECTED=$(awk '{print $1}' ${{ runner.temp }}/artifact-test/blob.sha256)
+          ACTUAL=$(sha256sum artifact-test/blob | awk '{print $1}')
+          EXPECTED=$(awk '{print $1}' artifact-test/blob.sha256)
           echo "expected: $EXPECTED"
           echo "actual:   $ACTUAL"
           if [ "$ACTUAL" = "$EXPECTED" ]; then
