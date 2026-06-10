@@ -29,7 +29,10 @@ jobs:
         uses: pyTooling/upload-artifact@v6
         with:
           name: artifact-test-blob-rosjazzy
-          path: /tmp/artifact-test
+          working-directory: /tmp/artifact-test
+          path: |
+            blob
+            blob.sha256
           retention-days: 1
 
   consumer:
