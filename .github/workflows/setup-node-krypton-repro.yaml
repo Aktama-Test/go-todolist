@@ -1,0 +1,29 @@
+name: setup-node lts/krypton repro
+on:
+  workflow_dispatch:
+
+jobs:
+  default:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/krypton
+      - run: node --version
+
+  check-latest:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/krypton
+          check-latest: true
+      - run: node --version
+
+  pinned:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.16.0
+      - run: node --version
