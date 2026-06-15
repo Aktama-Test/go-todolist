@@ -6,9 +6,10 @@ name: repro-dep-5030 (HTTP cache ActionResult orphan)
 # OutputFiles digests; OutputDirectories[].TreeDigest is trusted without
 # a Stat check.
 #
-# This workflow demonstrates the bug against cache.depot.dev by sending a
-# crafted ActionResult that references a fabricated (never-uploaded) Tree
-# digest. Expected after fix: PUT returns 404. Current: PUT returns 201.
+# This workflow demonstrates the bug against cache.depot.dev by uploading
+# the Action digest to CAS, then sending a crafted ActionResult that references
+# a fabricated (never-uploaded) Tree digest. Expected after fix: PUT /ac returns
+# 404. Current: PUT /ac returns 201.
 #
 # Re-run from the Actions tab any time to verify before/after the fix.
 
@@ -75,9 +76,10 @@ jobs:
             treeHash := hex.EncodeToString(treeSum[:])
             treeSize := int64(len(treeBytes))
 
-            // Fabricate an action digest the same way. The action key
-            // in the URL is just an opaque identifier from the server's
-            // perspective; the value of these bytes doesn't matter.
+            // Fabricate an action digest and upload the action bytes to CAS.
+            // The HTTP /ac/ handler checks that this exists before it stores
+            // an ActionResult, so this setup lets us isolate the missing
+            // OutputDirectories validation.
             actionBytes := mustRandom(32)
             actionSum := sha256.Sum256(actionBytes)
             actionHash := hex.EncodeToString(actionSum[:])
@@ -102,25 +104,31 @@ jobs:
             fmt.Printf("action hash: %s\n", actionHash)
             fmt.Printf("tree hash:   %s (NOT uploaded)\n\n", treeHash)
 
-            // Step 1: PUT /ac/<actionHash>. Per REAPI this should fail
+            // Step 1: PUT /cas/<actionHash>. This is required because
+            // HandlePut validates the action digest before storing /ac/.
+            putActionStatus, putActionBody := request("PUT", fmt.Sprintf("%s/cas/%s", cacheURL, actionHash), token, orgID, actionBytes)
+            fmt.Printf("PUT /cas/%s... (Action)\n  status: %d\n  body:   %s\n\n", actionHash[:12], putActionStatus, truncate(putActionBody, 200))
+
+            // Step 2: PUT /ac/<actionHash>. Per REAPI this should fail
             // because the referenced Tree is not in CAS. Bug: HandlePut
             // never iterates ar.OutputDirectories, so this succeeds.
             putStatus, putBody := request("PUT", fmt.Sprintf("%s/ac/%s", cacheURL, actionHash), token, orgID, body)
             fmt.Printf("PUT /ac/%s...\n  status: %d\n  body:   %s\n\n", actionHash[:12], putStatus, truncate(putBody, 200))
 
-            // Step 2: GET /ac/<actionHash>. If the PUT was accepted,
+            // Step 3: GET /ac/<actionHash>. If the PUT was accepted,
             // this returns the orphan ActionResult.
             getACStatus, _ := request("GET", fmt.Sprintf("%s/ac/%s", cacheURL, actionHash), token, orgID, nil)
             fmt.Printf("GET /ac/%s...\n  status: %d\n\n", actionHash[:12], getACStatus)
 
-            // Step 3: GET /cas/<treeHash>. Confirms the Tree the
+            // Step 4: GET /cas/<treeHash>. Confirms the Tree the
             // ActionResult claims is in CAS is genuinely not there.
             getTreeStatus, _ := request("GET", fmt.Sprintf("%s/cas/%s", cacheURL, treeHash), token, orgID, nil)
             fmt.Printf("GET /cas/%s... (referenced Tree)\n  status: %d\n\n", treeHash[:12], getTreeStatus)
 
             fmt.Println("---")
-            if putStatus < 300 && getACStatus < 300 && getTreeStatus == 404 {
+            if putActionStatus < 300 && putStatus < 300 && getACStatus < 300 && getTreeStatus == 404 {
               fmt.Println("BUG REPRODUCED:")
+              fmt.Printf("  PUT  /cas/ -> %d  (Action uploaded)\n", putActionStatus)
               fmt.Printf("  PUT  /ac/  -> %d  (orphan accepted)\n", putStatus)
               fmt.Printf("  GET  /ac/  -> %d  (orphan readable on cache hit)\n", getACStatus)
               fmt.Printf("  GET  /cas/ -> %d  (referenced Tree missing)\n", getTreeStatus)
@@ -128,6 +136,7 @@ jobs:
               os.Exit(0)
             }
             fmt.Println("Bug NOT reproduced. Status codes:")
+            fmt.Printf("  PUT  /cas/ -> %d  (Action upload prerequisite)\n", putActionStatus)
             fmt.Printf("  PUT  /ac/  -> %d  (expected 2xx today, 404 after fix)\n", putStatus)
             fmt.Printf("  GET  /ac/  -> %d\n", getACStatus)
             fmt.Printf("  GET  /cas/ -> %d\n", getTreeStatus)
