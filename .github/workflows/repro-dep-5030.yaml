@@ -1,0 +1,185 @@
+name: repro-dep-5030 (HTTP cache ActionResult orphan)
+
+# DEP-5030: HTTP /ac/ handler in webdav.go accepts ActionResults that
+# reference OutputDirectories whose Tree digest is not in CAS. The
+# handler only validates the action digest, stdout, stderr, and
+# OutputFiles digests; OutputDirectories[].TreeDigest is trusted without
+# a Stat check.
+#
+# This workflow demonstrates the bug against cache.depot.dev by sending a
+# crafted ActionResult that references a fabricated (never-uploaded) Tree
+# digest. Expected after fix: PUT returns 404. Current: PUT returns 201.
+#
+# Re-run from the Actions tab any time to verify before/after the fix.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repro:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Run repro
+        env:
+          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/repro && cd /tmp/repro
+
+          cat > go.mod <<'EOF'
+          module repro
+
+          go 1.23
+
+          require (
+            github.com/bazelbuild/remote-apis v0.0.0-20250106163131-9a0af1d31814
+            google.golang.org/protobuf v1.36.0
+          )
+          EOF
+
+          cat > main.go <<'EOF'
+          package main
+
+          import (
+            "bytes"
+            "crypto/rand"
+            "crypto/sha256"
+            "encoding/hex"
+            "fmt"
+            "io"
+            "net/http"
+            "os"
+
+            repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
+            "google.golang.org/protobuf/proto"
+          )
+
+          func main() {
+            token := os.Getenv("DEPOT_TOKEN")
+            if token == "" {
+              fmt.Fprintln(os.Stderr, "DEPOT_TOKEN required")
+              os.Exit(2)
+            }
+            cacheURL := envOr("CACHE_URL", "https://cache.depot.dev")
+            orgID := os.Getenv("ORG_ID")
+
+            // Fabricate a Tree digest. Random bytes -> sha256 -> hex.
+            // We never upload these bytes, so the digest is genuinely
+            // not in CAS for this org.
+            treeBytes := mustRandom(32)
+            treeSum := sha256.Sum256(treeBytes)
+            treeHash := hex.EncodeToString(treeSum[:])
+            treeSize := int64(len(treeBytes))
+
+            // Fabricate an action digest the same way. The action key
+            // in the URL is just an opaque identifier from the server's
+            // perspective; the value of these bytes doesn't matter.
+            actionBytes := mustRandom(32)
+            actionSum := sha256.Sum256(actionBytes)
+            actionHash := hex.EncodeToString(actionSum[:])
+
+            // Build an ActionResult referencing the missing Tree as an
+            // OutputDirectory. No OutputFiles, no stdout/stderr — those
+            // are correctly validated and we want to isolate the
+            // OutputDirectories gap.
+            ar := &repb.ActionResult{
+              OutputDirectories: []*repb.OutputDirectory{{
+                Path: "out",
+                TreeDigest: &repb.Digest{
+                  Hash:      treeHash,
+                  SizeBytes: treeSize,
+                },
+              }},
+            }
+            body, err := proto.Marshal(ar)
+            check(err)
+
+            fmt.Printf("cache URL:   %s\n", cacheURL)
+            fmt.Printf("action hash: %s\n", actionHash)
+            fmt.Printf("tree hash:   %s (NOT uploaded)\n\n", treeHash)
+
+            // Step 1: PUT /ac/<actionHash>. Per REAPI this should fail
+            // because the referenced Tree is not in CAS. Bug: HandlePut
+            // never iterates ar.OutputDirectories, so this succeeds.
+            putStatus, putBody := request("PUT", fmt.Sprintf("%s/ac/%s", cacheURL, actionHash), token, orgID, body)
+            fmt.Printf("PUT /ac/%s...\n  status: %d\n  body:   %s\n\n", actionHash[:12], putStatus, truncate(putBody, 200))
+
+            // Step 2: GET /ac/<actionHash>. If the PUT was accepted,
+            // this returns the orphan ActionResult.
+            getACStatus, _ := request("GET", fmt.Sprintf("%s/ac/%s", cacheURL, actionHash), token, orgID, nil)
+            fmt.Printf("GET /ac/%s...\n  status: %d\n\n", actionHash[:12], getACStatus)
+
+            // Step 3: GET /cas/<treeHash>. Confirms the Tree the
+            // ActionResult claims is in CAS is genuinely not there.
+            getTreeStatus, _ := request("GET", fmt.Sprintf("%s/cas/%s", cacheURL, treeHash), token, orgID, nil)
+            fmt.Printf("GET /cas/%s... (referenced Tree)\n  status: %d\n\n", treeHash[:12], getTreeStatus)
+
+            fmt.Println("---")
+            if putStatus < 300 && getACStatus < 300 && getTreeStatus == 404 {
+              fmt.Println("BUG REPRODUCED:")
+              fmt.Printf("  PUT  /ac/  -> %d  (orphan accepted)\n", putStatus)
+              fmt.Printf("  GET  /ac/  -> %d  (orphan readable on cache hit)\n", getACStatus)
+              fmt.Printf("  GET  /cas/ -> %d  (referenced Tree missing)\n", getTreeStatus)
+              fmt.Println("  This is the orphan Bazel will trip on with 'missing package' on next cache hit.")
+              os.Exit(0)
+            }
+            fmt.Println("Bug NOT reproduced. Status codes:")
+            fmt.Printf("  PUT  /ac/  -> %d  (expected 2xx today, 404 after fix)\n", putStatus)
+            fmt.Printf("  GET  /ac/  -> %d\n", getACStatus)
+            fmt.Printf("  GET  /cas/ -> %d\n", getTreeStatus)
+            os.Exit(1)
+          }
+
+          func request(method, url, token, orgID string, body []byte) (int, string) {
+            var reqBody io.Reader
+            if body != nil {
+              reqBody = bytes.NewReader(body)
+            }
+            req, err := http.NewRequest(method, url, reqBody)
+            check(err)
+            req.Header.Set("Authorization", "Bearer "+token)
+            // Must match entryType == "bazel" in parseUserAgent so the
+            // /ac/ branch in HandlePut fires.
+            req.Header.Set("User-Agent", "bazel/9.1.0")
+            if orgID != "" {
+              req.Header.Set("X-Depot-Org", orgID)
+            }
+            if body != nil {
+              req.Header.Set("Content-Type", "application/octet-stream")
+              req.ContentLength = int64(len(body))
+            }
+            resp, err := http.DefaultClient.Do(req)
+            check(err)
+            defer resp.Body.Close()
+            respBody, _ := io.ReadAll(resp.Body)
+            return resp.StatusCode, string(respBody)
+          }
+
+          func mustRandom(n int) []byte {
+            b := make([]byte, n)
+            _, err := rand.Read(b)
+            check(err)
+            return b
+          }
+          func envOr(k, d string) string {
+            if v := os.Getenv(k); v != "" { return v }
+            return d
+          }
+          func truncate(s string, n int) string {
+            if len(s) <= n { return s }
+            return s[:n] + "..."
+          }
+          func check(err error) {
+            if err != nil {
+              fmt.Fprintln(os.Stderr, "fatal:", err)
+              os.Exit(1)
+            }
+          }
+          EOF
+
+          go mod tidy
+          go run .
