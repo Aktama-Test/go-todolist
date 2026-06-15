@@ -1,0 +1,198 @@
+name: repro-dep-5030 (HTTP cache Tree parent link)
+
+# Pulumi-shaped DEP-5030 test:
+# 1. Upload a real Bazel Tree proto to /cas/<treeHash>.
+# 2. Upload the Action digest prerequisite to /cas/<actionHash>.
+# 3. Upload an ActionResult to /ac/<actionHash> that references the Tree as
+#    OutputDirectories[].TreeDigest.
+# 4. Print the exact Depot HTTP cache keys so production DB metadata can be
+#    checked for CacheEntryParent child(Tree) -> parent(AC).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repro:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Run Pulumi-shaped parent-link repro
+        env:
+          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/repro-parent-link && cd /tmp/repro-parent-link
+
+          cat > go.mod <<'EOF'
+          module repro-parent-link
+
+          go 1.23
+
+          require (
+            github.com/bazelbuild/remote-apis v0.0.0-20250106163131-9a0af1d31814
+            google.golang.org/protobuf v1.36.0
+          )
+          EOF
+
+          cat > main.go <<'EOF'
+          package main
+
+          import (
+            "bytes"
+            "crypto/rand"
+            "crypto/sha256"
+            "encoding/hex"
+            "fmt"
+            "io"
+            "net/http"
+            "os"
+
+            repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
+            "google.golang.org/protobuf/proto"
+          )
+
+          func main() {
+            token := os.Getenv("DEPOT_TOKEN")
+            if token == "" {
+              fmt.Fprintln(os.Stderr, "DEPOT_TOKEN required")
+              os.Exit(2)
+            }
+            cacheURL := envOr("CACHE_URL", "https://cache.depot.dev")
+            orgID := os.Getenv("ORG_ID")
+
+            fileBytes := mustRandom(32)
+            fileSum := sha256.Sum256(fileBytes)
+            fileHash := hex.EncodeToString(fileSum[:])
+
+            tree := &repb.Tree{
+              Root: &repb.Directory{
+                Files: []*repb.FileNode{{
+                  Name:         "pulumi-shaped-output.txt",
+                  Digest:       &repb.Digest{Hash: fileHash, SizeBytes: int64(len(fileBytes))},
+                  IsExecutable: false,
+                }},
+              },
+            }
+            treeBytes, err := proto.Marshal(tree)
+            check(err)
+            treeSum := sha256.Sum256(treeBytes)
+            treeHash := hex.EncodeToString(treeSum[:])
+
+            actionBytes := mustRandom(32)
+            actionSum := sha256.Sum256(actionBytes)
+            actionHash := hex.EncodeToString(actionSum[:])
+
+            ar := &repb.ActionResult{
+              OutputDirectories: []*repb.OutputDirectory{{
+                Path:       "out",
+                TreeDigest: &repb.Digest{Hash: treeHash, SizeBytes: int64(len(treeBytes))},
+              }},
+            }
+            acBytes, err := proto.Marshal(ar)
+            check(err)
+
+            actionKey := keyFromPath("bazel", "/cas/"+actionHash)
+            fileKey := keyFromPath("bazel", "/cas/"+fileHash)
+            treeKey := keyFromPath("bazel", "/cas/"+treeHash)
+            acKey := keyFromPath("bazel", "/ac/"+actionHash)
+
+            fmt.Printf("cache URL:   %s\n", cacheURL)
+            fmt.Printf("action hash: %s\n", actionHash)
+            fmt.Printf("tree hash:   %s (uploaded)\n", treeHash)
+            fmt.Printf("file hash:   %s (uploaded)\n\n", fileHash)
+            fmt.Printf("action CAS key: %s\n", actionKey)
+            fmt.Printf("tree CAS key:   %s\n", treeKey)
+            fmt.Printf("file CAS key:   %s\n", fileKey)
+            fmt.Printf("AC key:         %s\n\n", acKey)
+
+            putFileStatus, putFileBody := request("PUT", fmt.Sprintf("%s/cas/%s", cacheURL, fileHash), token, orgID, fileBytes)
+            fmt.Printf("PUT /cas/%s... (File)\n  status: %d\n  body:   %s\n\n", fileHash[:12], putFileStatus, truncate(putFileBody, 200))
+
+            putTreeStatus, putTreeBody := request("PUT", fmt.Sprintf("%s/cas/%s", cacheURL, treeHash), token, orgID, treeBytes)
+            fmt.Printf("PUT /cas/%s... (Tree)\n  status: %d\n  body:   %s\n\n", treeHash[:12], putTreeStatus, truncate(putTreeBody, 200))
+
+            putActionStatus, putActionBody := request("PUT", fmt.Sprintf("%s/cas/%s", cacheURL, actionHash), token, orgID, actionBytes)
+            fmt.Printf("PUT /cas/%s... (Action)\n  status: %d\n  body:   %s\n\n", actionHash[:12], putActionStatus, truncate(putActionBody, 200))
+
+            putACStatus, putACBody := request("PUT", fmt.Sprintf("%s/ac/%s", cacheURL, actionHash), token, orgID, acBytes)
+            fmt.Printf("PUT /ac/%s...\n  status: %d\n  body:   %s\n\n", actionHash[:12], putACStatus, truncate(putACBody, 200))
+
+            getACStatus, _ := request("GET", fmt.Sprintf("%s/ac/%s", cacheURL, actionHash), token, orgID, nil)
+            fmt.Printf("GET /ac/%s...\n  status: %d\n\n", actionHash[:12], getACStatus)
+
+            getTreeStatus, _ := request("GET", fmt.Sprintf("%s/cas/%s", cacheURL, treeHash), token, orgID, nil)
+            fmt.Printf("GET /cas/%s... (referenced Tree)\n  status: %d\n\n", treeHash[:12], getTreeStatus)
+
+            fmt.Println("---")
+            if putFileStatus < 300 && putTreeStatus < 300 && putActionStatus < 300 && putACStatus < 300 && getACStatus < 300 && getTreeStatus < 300 {
+              fmt.Println("PULUMI-SHAPED WRITE COMPLETE:")
+              fmt.Println("  Tree was uploaded before the ActionResult.")
+              fmt.Println("  Next check production DB metadata for CacheEntryParent:")
+              fmt.Println("  expected child entryID = Tree CAS entry")
+              fmt.Println("  expected parentID      = AC entry")
+              os.Exit(0)
+            }
+
+            fmt.Println("Pulumi-shaped write did not complete. Status codes:")
+            fmt.Printf("  PUT file CAS   -> %d\n", putFileStatus)
+            fmt.Printf("  PUT tree CAS   -> %d\n", putTreeStatus)
+            fmt.Printf("  PUT action CAS -> %d\n", putActionStatus)
+            fmt.Printf("  PUT AC         -> %d\n", putACStatus)
+            fmt.Printf("  GET AC         -> %d\n", getACStatus)
+            fmt.Printf("  GET tree CAS   -> %d\n", getTreeStatus)
+            os.Exit(1)
+          }
+
+          func request(method, url, token, orgID string, body []byte) (int, string) {
+            var reqBody io.Reader
+            if body != nil {
+              reqBody = bytes.NewReader(body)
+            }
+            req, err := http.NewRequest(method, url, reqBody)
+            check(err)
+            req.Header.Set("Authorization", "Bearer "+token)
+            req.Header.Set("User-Agent", "bazel/9.1.0")
+            if orgID != "" {
+              req.Header.Set("X-Depot-Org", orgID)
+            }
+            if body != nil {
+              req.Header.Set("Content-Type", "application/octet-stream")
+              req.ContentLength = int64(len(body))
+            }
+            resp, err := http.DefaultClient.Do(req)
+            check(err)
+            defer resp.Body.Close()
+            respBody, _ := io.ReadAll(resp.Body)
+            return resp.StatusCode, string(respBody)
+          }
+
+          func keyFromPath(prefix, path string) string {
+            return prefix + hex.EncodeToString([]byte(path))
+          }
+          func mustRandom(n int) []byte {
+            b := make([]byte, n)
+            _, err := rand.Read(b)
+            check(err)
+            return b
+          }
+          func envOr(k, d string) string {
+            if v := os.Getenv(k); v != "" { return v }
+            return d
+          }
+          func truncate(s string, n int) string {
+            if len(s) <= n { return s }
+            return s[:n] + "..."
+          }
+          func check(err error) {
+            if err != nil {
+              fmt.Fprintln(os.Stderr, "fatal:", err)
+              os.Exit(1)
+            }
+          }
+          EOF
+
+          go mod tidy
+          go run .
