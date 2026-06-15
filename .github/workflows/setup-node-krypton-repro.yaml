@@ -3,27 +3,20 @@ on:
   workflow_dispatch:
 
 jobs:
-  default:
-    runs-on: depot-ubuntu-24.04
+  matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [depot-ubuntu-24.04, ubuntu-latest]
+        config:
+          - { name: default, version: lts/krypton, check-latest: false }
+          - { name: check-latest, version: lts/krypton, check-latest: true }
+          - { name: pinned, version: 24.16.0, check-latest: false }
+    name: ${{ matrix.runner }} / ${{ matrix.config.name }}
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/krypton
-      - run: node --version
-
-  check-latest:
-    runs-on: depot-ubuntu-24.04
-    steps:
-      - uses: actions/setup-node@v4
-        with:
-          node-version: lts/krypton
-          check-latest: true
-      - run: node --version
-
-  pinned:
-    runs-on: depot-ubuntu-24.04
-    steps:
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24.16.0
+          node-version: ${{ matrix.config.version }}
+          check-latest: ${{ matrix.config.check-latest }}
       - run: node --version
