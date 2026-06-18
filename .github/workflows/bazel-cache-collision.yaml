@@ -1,0 +1,75 @@
+name: Bazel Cache Collision Repro
+
+# Reproduces the T-9105 collision: a hand-written .bazelrc (mimicking the
+# customer) layered on top of Depot's auto-connect cache injection on a Depot
+# runner. Stage 1 only inspects how the two configs merge; no build yet.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - test/bazel-cache-collision
+
+jobs:
+  depot-runner:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inspect merged Bazel config
+        run: |
+          set +e
+          echo "::group::Depot-injected HOME/.bazelrc"
+          if [ -f "$HOME/.bazelrc" ]; then
+            sed -E 's/(depot_[a-z0-9]+_)[A-Za-z0-9-]+/\1REDACTED/g' "$HOME/.bazelrc"
+          else
+            echo "(no HOME/.bazelrc present)"
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Workspace .bazelrc (ours)"
+          cat .bazelrc
+          echo "::endgroup::"
+
+          echo "::group::Depot cache env vars"
+          echo "DEPOT_CACHE_HOST=${DEPOT_CACHE_HOST:-<unset>}"
+          if [ -n "${DEPOT_CACHE_TOKEN:-}" ]; then
+            echo "DEPOT_CACHE_TOKEN present length=${#DEPOT_CACHE_TOKEN} prefix=$(printf '%s' "$DEPOT_CACHE_TOKEN" | cut -c1-12)"
+          else
+            echo "DEPOT_CACHE_TOKEN <unset>"
+          fi
+          echo "::endgroup::"
+
+      - name: Bazel announce_rc (effective merge + precedence)
+        continue-on-error: true
+        run: |
+          set +e
+          if ! command -v bazel >/dev/null 2>&1; then
+            echo "bazel not found; installing bazelisk"
+            sudo npm install -g @bazel/bazelisk >/dev/null 2>&1 || npm install -g @bazel/bazelisk >/dev/null 2>&1
+          fi
+          bazel version 2>&1 | head -3
+          echo "::group::announce_rc (remote_* / repo_contents lines)"
+          timeout 120 bazel info --announce_rc --remote_timeout=10s 2>&1 \
+            | grep -iE "rc file|Inherited|remote_cache|remote_header|repo_contents" \
+            | sed -E 's/(depot_[a-z0-9]+_)[A-Za-z0-9-]+/\1REDACTED/g'
+          echo "::endgroup::"
+
+  ubuntu-latest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect config (contrast - no Depot injection expected)
+        run: |
+          set +e
+          echo "::group::HOME/.bazelrc"
+          if [ -f "$HOME/.bazelrc" ]; then
+            sed -E 's/(depot_[a-z0-9]+_)[A-Za-z0-9-]+/\1REDACTED/g' "$HOME/.bazelrc"
+          else
+            echo "(no HOME/.bazelrc present)"
+          fi
+          echo "::endgroup::"
+          echo "DEPOT_CACHE_HOST=${DEPOT_CACHE_HOST:-<unset>}"
+          [ -n "${DEPOT_CACHE_TOKEN:-}" ] && echo "DEPOT_CACHE_TOKEN present" || echo "DEPOT_CACHE_TOKEN <unset>"
