@@ -1,9 +1,18 @@
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 
-# Loading from @bazel_skylib forces a repository fetch, so the remote
-# repo-contents cache is exercised (not just the action cache).
+# write_file pulls in @bazel_skylib, forcing a repository fetch that exercises
+# the remote repo-contents cache.
 write_file(
+    name = "seed",
+    out = "seed.txt",
+    content = ["seed"],
+)
+
+# A genrule is a real spawned action, so it goes through the remote ACTION
+# cache (GetActionResult / upload), unlike write_file which runs in-process.
+genrule(
     name = "hello",
-    out = "hello.txt",
-    content = ["hello"],
+    srcs = [":seed"],
+    outs = ["hello.txt"],
+    cmd = "cat $(location :seed) > $@ && echo built >> $@",
 )
