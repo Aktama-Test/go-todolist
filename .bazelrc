@@ -1,10 +1,7 @@
-# Manual Depot Cache config, mimicking the customer setup (T-9105).
-# Intentionally hand-written while the org's "auto-connect to Depot Cache"
-# setting is ON, to reproduce the bazelrc collision on Depot runners.
-#
-# The customer injects the auth header via a bazelisk wrapper on the command
-# line; here we put a placeholder header directly in the workspace rc so it
-# shows up in `bazel info --announce_rc` next to Depot's injected one.
+# Manual Depot Cache config, mimicking the customer (T-9105).
+# The auth header is injected on the COMMAND LINE (like their bazelisk
+# wrapper), NOT here, so that under auto-connect Depot's injected per-runner
+# header (from ~/.bazelrc) sorts ahead of ours. Only remote_cache and the
+# repo-contents cache live in the rc, matching the customer's setup.
 build --remote_cache=grpcs://cache.depot.dev
-build --remote_header=authorization=OURS_MANUAL_TOKEN
 startup --experimental_remote_repo_contents_cache
