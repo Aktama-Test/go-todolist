@@ -1,5 +1,9 @@
-genrule(
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+
+# Loading from @bazel_skylib forces a repository fetch, so the remote
+# repo-contents cache is exercised (not just the action cache).
+write_file(
     name = "hello",
-    outs = ["hello.txt"],
-    cmd = "echo hello > $@",
+    out = "hello.txt",
+    content = ["hello"],
 )

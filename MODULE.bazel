@@ -1,1 +1,6 @@
 module(name = "bazel_cache_collision_repro")
+
+# A real external dep so a fetch happens, which exercises the
+# --experimental_remote_repo_contents_cache path (the one that turns a cache
+# auth failure into a fatal "Inconsistent filesystem operations").
+bazel_dep(name = "bazel_skylib", version = "1.7.1")

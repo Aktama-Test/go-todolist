@@ -1,12 +1,11 @@
 name: Bazel Cache Collision Repro
 
-# Stage 2: inject the auth header on the command line (mimicking the customer's
-# bazelisk wrapper) and actually build. The key step builds with a deliberately
-# INVALID command-line token:
-#   - auto-connect ON  -> Depot's injected per-runner token sorts first, shadows
-#                         ours, so the build authenticates anyway.
-#   - auto-connect OFF -> only our (invalid) token is sent, so it fails.
-# Same invalid token, opposite outcome, toggled only by the org setting.
+# depot-runner: the shadowing test (invalid command-line token still hits the
+#   cache when auto-connect is on, because Depot's injected per-runner token
+#   sorts first).
+# github-hosted: ubuntu-latest has no Depot injection, so this runs Bryce's
+#   exact setup (manual .bazelrc + repo-contents cache + valid org token on the
+#   command line) to see whether it fails on the GitHub-hosted path too.
 
 on:
   workflow_dispatch: {}
@@ -22,7 +21,6 @@ jobs:
       DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-
       - name: Show merged config + header order
         run: |
           set +e
@@ -31,13 +29,7 @@ jobs:
           echo "::endgroup::"
           command -v bazel >/dev/null 2>&1 || sudo npm install -g @bazel/bazelisk >/dev/null 2>&1
           bazel version 2>&1 | head -1
-          echo "::group::announce_rc"
-          bazel info --announce_rc --remote_timeout=10s 2>&1 \
-            | grep -iE "Inherited 'build'|remote_cache|remote_header" \
-            | sed -E 's/(depot_[a-z0-9]+_)[A-Za-z0-9-]+/\1REDACTED/g'
-          echo "::endgroup::"
-
-      - name: Build with INVALID command-line token (the shadowing test)
+      - name: Build with INVALID command-line token (shadowing test)
         run: |
           set +e
           bazel clean >/dev/null 2>&1
@@ -45,20 +37,47 @@ jobs:
             --remote_header=authorization=depot_org_INVALIDPLACEHOLDER000 \
             --remote_upload_local_results=true \
             --remote_timeout=20s \
-            --disk_cache= 2>&1 | tee build-invalid.log | tail -30
+            --disk_cache= 2>&1 | tee build-invalid.log | tail -25
           echo "----- auth/cache signal (INVALID token) -----"
           grep -iE "UNAUTHENTICATED|invalid token|remote cache hit|uploaded|processes:" build-invalid.log \
-            | sed -E 's/(depot_[a-z0-9]+_)[A-Za-z0-9-]+/\1REDACTED/g' || echo "(no auth/cache lines found)"
+            | sed -E 's/(depot_[a-z0-9]+_)[A-Za-z0-9-]+/\1REDACTED/g' || echo "(none found)"
 
-      - name: Build with VALID org token (control)
+  github-hosted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm no Depot injection
         run: |
           set +e
-          bazel clean >/dev/null 2>&1
+          [ -f "$HOME/.bazelrc" ] && cat "$HOME/.bazelrc" || echo "(no ~/.bazelrc - expected on GitHub-hosted)"
+          echo "DEPOT_CACHE_HOST=${DEPOT_CACHE_HOST:-<unset>}"
+          command -v bazel >/dev/null 2>&1 || sudo npm install -g @bazel/bazelisk >/dev/null 2>&1
+          bazel version 2>&1 | head -1
+      - name: Build with VALID org token (action cache + repo-contents cache)
+        run: |
+          set +e
+          bazel clean --expunge >/dev/null 2>&1
           bazel build //:hello \
             --remote_header=authorization=$DEPOT_TOKEN \
             --remote_upload_local_results=true \
-            --remote_timeout=20s \
-            --disk_cache= 2>&1 | tee build-valid.log | tail -30
-          echo "----- auth/cache signal (VALID org token) -----"
-          grep -iE "UNAUTHENTICATED|invalid token|remote cache hit|uploaded|processes:" build-valid.log \
-            | sed -E 's/(depot_[a-z0-9]+_)[A-Za-z0-9-]+/\1REDACTED/g' || echo "(no auth/cache lines found)"
+            --remote_timeout=30s \
+            --disk_cache= \
+            --repository_cache= 2>&1 | tee gh.log | tail -50
+          echo "----- signals (VALID org token, GitHub-hosted) -----"
+          grep -iE "UNAUTHENTICATED|invalid token|repo contents|Remote repo|Inconsistent filesystem|remote cache hit|uploaded|processes:|Fetching|skylib" gh.log \
+            | sed -E 's/(depot_[a-z0-9]+_)[A-Za-z0-9-]+/\1REDACTED/g' | head -40
+      - name: Second build (warm repo-contents cache)
+        run: |
+          set +e
+          bazel clean --expunge >/dev/null 2>&1
+          bazel build //:hello \
+            --remote_header=authorization=$DEPOT_TOKEN \
+            --remote_timeout=30s \
+            --disk_cache= \
+            --repository_cache= 2>&1 | tee gh2.log | tail -30
+          echo "----- signals (warm) -----"
+          grep -iE "UNAUTHENTICATED|invalid token|repo contents|Remote repo|Inconsistent filesystem|remote cache hit|processes:" gh2.log \
+            | sed -E 's/(depot_[a-z0-9]+_)[A-Za-z0-9-]+/\1REDACTED/g' | head -30
