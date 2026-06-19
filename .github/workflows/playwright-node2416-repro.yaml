@@ -1,0 +1,50 @@
+name: playwright node 24.16 install hang repro
+
+on:
+  push:
+    branches: [playwright-node2416-repro]
+  workflow_dispatch:
+
+jobs:
+  pw:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "repro (node 24.16.0 + playwright <1.60)"
+            node: "24.16.0"
+            pw: "<1.60"
+          - name: "fix A pin-node (node 24.15.0 + playwright <1.60)"
+            node: "24.15.0"
+            pw: "<1.60"
+          - name: "fix B upgrade-pw (node 24.16.0 + playwright >=1.60)"
+            node: "24.16.0"
+            pw: ">=1.60"
+    name: ${{ matrix.name }}
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Setup Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install Playwright ${{ matrix.pw }} and print versions
+        run: |
+          set -e
+          echo "node: $(node --version)"
+          npm init -y >/dev/null 2>&1
+          npm i -D "@playwright/test@${{ matrix.pw }}" >/dev/null 2>&1
+          echo "playwright: $(npx playwright --version)"
+
+      - name: playwright install chromium (300s cap)
+        run: |
+          set +e
+          timeout --signal=KILL 300 npx playwright install chromium
+          code=$?
+          echo "playwright install chromium exit code: $code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::install did not complete within 300s (exit $code) — HANG REPRODUCED"
+            exit 1
+          fi
+          echo "install completed cleanly"
