@@ -9,6 +9,8 @@ jobs:
         run: |
           echo "RUNNER_TOOL_CACHE=$RUNNER_TOOL_CACHE"
           echo "whoami=$(whoami) uid=$(id -u) gid=$(id -g)"
+          cat /etc/environment
+          ls -ld /opt/hostedtoolcache
           echo "--- parents ---"
           for p in /home/runner /home/runner/work /home/runner/work/tmp "$RUNNER_TOOL_CACHE"; do
             ls -ld "$p" 2>&1 || echo "  (missing) $p"

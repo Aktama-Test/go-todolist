@@ -1,0 +1,31 @@
+name: Repro DEP-4193 /usr/share/dotnet perms
+on:
+  workflow_dispatch:
+jobs:
+  repro:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - name: Inspect user + dir perms (before setup-dotnet)
+        run: |
+          echo "whoami=$(whoami) uid=$(id -u) gid=$(id -g)"
+          echo "GitHub runs steps as non-root 'runner' (uid 1001); root would mask the perm bug."
+          echo "GitHub runners have 0777 root:root on these dirs."
+          for p in /usr/share /opt /usr/share/dotnet; do
+            stat -c '%n  %U:%G  %a' "$p" 2>&1 || echo "  (missing) $p"
+          done
+          # Prove a non-root write works (the actual thing the bug broke):
+          touch /usr/share/dotnet/.perm-test \
+            && echo "write to /usr/share/dotnet OK" \
+            || echo "write to /usr/share/dotnet DENIED"
+
+      - name: Install .NET (the action that was failing)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Inspect + verify (post setup-dotnet)
+        run: |
+          stat -c '%n  %U:%G  %a' /usr/share/dotnet
+          dotnet --info \
+            && echo "OK (DEP-4193 fixed: setup-dotnet succeeded without chmod 777)" \
+            || echo "FAIL (DEP-4193 reproduced)"
