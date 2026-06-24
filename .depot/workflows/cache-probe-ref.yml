@@ -1,0 +1,43 @@
+name: cache probe ref
+
+# Variant of the cache probe that forces GITHUB_REF, to test whether
+# actions/cache will save+restore under `depot ci run` once a branch/tag
+# ref is present. Run twice: run #2 should RESTORE if the workaround works.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: depot-ubuntu-24.04-4
+    env:
+      GITHUB_REF: refs/heads/cache-probe-depot-ci-run
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Force GITHUB_REF via $GITHUB_ENV
+        run: |
+          echo "GITHUB_REF (job env) = '${GITHUB_REF:-}'"
+          echo "GITHUB_REF=refs/heads/cache-probe-depot-ci-run" >> "$GITHUB_ENV"
+
+      - name: Show GITHUB_REF at runtime
+        run: echo "GITHUB_REF now = '${GITHUB_REF:-}'"
+
+      - name: Restore probe cache
+        id: c
+        uses: actions/cache@v6
+        with:
+          path: probe-cache
+          key: cache-probe-ref-v1
+
+      - name: Inspect + populate
+        run: |
+          echo "cache-hit output = '${{ steps.c.outputs.cache-hit }}'"
+          if [ -f probe-cache/stamp.txt ]; then
+            echo "RESTORED — previous stamp:"; cat probe-cache/stamp.txt
+          else
+            echo "NO CACHE — first run (or save never happened)"
+          fi
+          mkdir -p probe-cache
+          echo "stamped at run, epoch=$(date +%s)" > probe-cache/stamp.txt
+          echo "wrote new stamp:"; cat probe-cache/stamp.txt
