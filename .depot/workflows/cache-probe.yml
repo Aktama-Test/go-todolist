@@ -1,0 +1,34 @@
+name: cache probe
+
+# Minimal repro: does actions/cache save+restore under `depot ci run`?
+# Run it twice (see commands below). Run #1 is a cold miss and writes a stamp;
+# run #2 should restore that exact stamp and report cache-hit=true. If run #2
+# shows "NO CACHE" / empty cache-hit, actions/cache is not persisting.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Restore probe cache
+        id: c
+        uses: actions/cache@v6
+        with:
+          path: probe-cache
+          key: cache-probe-v1
+
+      - name: Inspect + populate
+        run: |
+          echo "cache-hit output = '${{ steps.c.outputs.cache-hit }}'"
+          if [ -f probe-cache/stamp.txt ]; then
+            echo "RESTORED — previous stamp:"; cat probe-cache/stamp.txt
+          else
+            echo "NO CACHE — first run (or save never happened)"
+          fi
+          mkdir -p probe-cache
+          echo "stamped at run, epoch=$(date +%s)" > probe-cache/stamp.txt
+          echo "wrote new stamp:"; cat probe-cache/stamp.txt
