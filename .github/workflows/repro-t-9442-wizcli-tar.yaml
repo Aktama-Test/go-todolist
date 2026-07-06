@@ -1,0 +1,105 @@
+name: repro-t-9442-wizcli-tar
+# Reproduces T-9442: does depot/use-containerd-snapshotter-action taint the
+# `outputs: type=docker,dest=` tar that WizCLI scans? We can't run WizCLI (no
+# creds), but the tar contents are the root-cause question. Three jobs isolate
+# whether the snapshotter and/or `load: true` change the exported tar.
+on:
+  push:
+    branches:
+      - repro/t-9442-wizcli-containerd-tar
+  workflow_dispatch:
+
+jobs:
+  baseline-no-snapshotter:
+    runs-on: depot-ubuntu-24.04-8
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: depot/setup-action@v1
+      - name: Build (no snapshotter) -> tar
+        uses: depot/build-push-action@v1
+        with:
+          project: 2mtnv574xd
+          token: ${{ secrets.DEPOT_TOKEN }}
+          context: .
+          file: Dockerfile
+          load: true
+          outputs: type=docker,dest=/tmp/scan-image.tar
+          push: false
+          provenance: false
+          tags: todolist:scan
+          secrets: |
+            DEPOT_TOKEN=${{ secrets.DEPOT_TOKEN }}
+      - name: Inspect tar
+        run: |
+          echo "=== ls -l ==="; ls -l /tmp/scan-image.tar
+          echo "=== tar tvf ==="; tar tvf /tmp/scan-image.tar
+          echo "=== extract ==="; mkdir -p /tmp/x && tar xf /tmp/scan-image.tar -C /tmp/x
+          echo "--- manifest.json (docker archive) ---"; cat /tmp/x/manifest.json 2>/dev/null || echo "(none)"
+          echo "--- index.json (oci layout) ---"; cat /tmp/x/index.json 2>/dev/null || echo "(none)"
+          echo "=== largest files in archive ==="; find /tmp/x -type f -exec ls -l {} \; 2>/dev/null | sort -k5 -n | tail -20
+
+  with-snapshotter:
+    runs-on: depot-ubuntu-24.04-8
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: depot/use-containerd-snapshotter-action@v1
+      - uses: depot/setup-action@v1
+      - name: Build (containerd snapshotter) -> tar
+        uses: depot/build-push-action@v1
+        with:
+          project: 2mtnv574xd
+          token: ${{ secrets.DEPOT_TOKEN }}
+          context: .
+          file: Dockerfile
+          load: true
+          outputs: type=docker,dest=/tmp/scan-image.tar
+          push: false
+          provenance: false
+          tags: todolist:scan
+          secrets: |
+            DEPOT_TOKEN=${{ secrets.DEPOT_TOKEN }}
+      - name: Inspect tar
+        run: |
+          echo "=== ls -l ==="; ls -l /tmp/scan-image.tar
+          echo "=== tar tvf ==="; tar tvf /tmp/scan-image.tar
+          echo "=== extract ==="; mkdir -p /tmp/x && tar xf /tmp/scan-image.tar -C /tmp/x
+          echo "--- manifest.json (docker archive) ---"; cat /tmp/x/manifest.json 2>/dev/null || echo "(none)"
+          echo "--- index.json (oci layout) ---"; cat /tmp/x/index.json 2>/dev/null || echo "(none)"
+          echo "=== largest files in archive ==="; find /tmp/x -type f -exec ls -l {} \; 2>/dev/null | sort -k5 -n | tail -20
+
+  with-snapshotter-no-load:
+    runs-on: depot-ubuntu-24.04-8
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: depot/use-containerd-snapshotter-action@v1
+      - uses: depot/setup-action@v1
+      - name: Build (containerd snapshotter, no load) -> tar
+        uses: depot/build-push-action@v1
+        with:
+          project: 2mtnv574xd
+          token: ${{ secrets.DEPOT_TOKEN }}
+          context: .
+          file: Dockerfile
+          outputs: type=docker,dest=/tmp/scan-image.tar
+          push: false
+          provenance: false
+          tags: todolist:scan
+          secrets: |
+            DEPOT_TOKEN=${{ secrets.DEPOT_TOKEN }}
+      - name: Inspect tar
+        run: |
+          echo "=== ls -l ==="; ls -l /tmp/scan-image.tar
+          echo "=== tar tvf ==="; tar tvf /tmp/scan-image.tar
+          echo "=== extract ==="; mkdir -p /tmp/x && tar xf /tmp/scan-image.tar -C /tmp/x
+          echo "--- manifest.json (docker archive) ---"; cat /tmp/x/manifest.json 2>/dev/null || echo "(none)"
+          echo "--- index.json (oci layout) ---"; cat /tmp/x/index.json 2>/dev/null || echo "(none)"
+          echo "=== largest files in archive ==="; find /tmp/x -type f -exec ls -l {} \; 2>/dev/null | sort -k5 -n | tail -20
