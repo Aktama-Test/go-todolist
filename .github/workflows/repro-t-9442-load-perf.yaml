@@ -1,0 +1,67 @@
+name: repro-t-9442-load-perf
+# T-9442: does depot/use-containerd-snapshotter-action change depot/build-push-action?
+# The build is remote (BuildKit), so only `load: true` (pull into the local daemon)
+# can be affected by the local containerd image store. Build a ~400MB incompressible
+# image with load: true, with and without the action, confirm the load succeeds, and
+# compare timing.
+on:
+  push:
+    branches:
+      - repro/t-9442-wizcli-containerd-tar
+  workflow_dispatch:
+
+jobs:
+  load-no-snapshotter:
+    runs-on: depot-ubuntu-24.04-8
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: depot/setup-action@v1
+      - name: mark start
+        run: echo "START=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Build + load (no snapshotter)
+        uses: depot/build-push-action@v1
+        with:
+          project: 2mtnv574xd
+          token: ${{ secrets.DEPOT_TOKEN }}
+          context: .github/perf-test
+          file: .github/perf-test/Dockerfile
+          load: true
+          push: false
+          provenance: false
+          tags: perftest:scan
+      - name: report
+        run: |
+          echo "=== build+load wall time (s) ==="; echo "$(( $(date +%s) - START ))"
+          echo "=== docker images ==="; docker images | grep -i perftest || echo "NOT FOUND"
+          echo "=== inspect (confirms load succeeded) ==="; docker image inspect perftest:scan --format 'id={{.Id}} size={{.Size}} store={{.GraphDriver.Name}}' || echo "INSPECT FAILED"
+
+  load-with-snapshotter:
+    runs-on: depot-ubuntu-24.04-8
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: depot/use-containerd-snapshotter-action@v1
+      - uses: depot/setup-action@v1
+      - name: mark start
+        run: echo "START=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Build + load (containerd snapshotter)
+        uses: depot/build-push-action@v1
+        with:
+          project: 2mtnv574xd
+          token: ${{ secrets.DEPOT_TOKEN }}
+          context: .github/perf-test
+          file: .github/perf-test/Dockerfile
+          load: true
+          push: false
+          provenance: false
+          tags: perftest:scan
+      - name: report
+        run: |
+          echo "=== build+load wall time (s) ==="; echo "$(( $(date +%s) - START ))"
+          echo "=== docker images ==="; docker images | grep -i perftest || echo "NOT FOUND"
+          echo "=== inspect (confirms load succeeded) ==="; docker image inspect perftest:scan --format 'id={{.Id}} size={{.Size}} store={{.GraphDriver.Name}}' || echo "INSPECT FAILED"
