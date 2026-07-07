@@ -1,0 +1,49 @@
+name: repro-t-9442-soci
+# T-9442 follow-up: can a scan-before-push flow still get SOCI?
+# Simulate: (1) build for scan (--load, no push), then (2) push with soci=true.
+# Check that step 2 reuses cache (cheap "push step") and actually emits a SOCI index.
+on:
+  push:
+    branches:
+      - repro/t-9442-wizcli-containerd-tar
+  workflow_dispatch:
+
+jobs:
+  soci-push:
+    runs-on: depot-ubuntu-24.04-8
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+      REG: t67llm9p7m.registry.depot.dev
+    steps:
+      - uses: actions/checkout@v6
+      - uses: depot/setup-action@v1
+
+      - name: "Step 1: build for scan (--load, no push)"
+        run: |
+          depot build --load --project 2mtnv574xd \
+            -f .github/perf-test/Dockerfile -t soci-test:scan .github/perf-test
+
+      - name: "Step 2: push WITH soci (should hit cache)"
+        run: |
+          set -x
+          depot build --push --project 2mtnv574xd \
+            -f .github/perf-test/Dockerfile \
+            -t "$REG/soci-test:t1" \
+            --output type=image,soci=true,compression=gzip,force-compression=true,oci-mediatypes=true \
+            .github/perf-test 2>&1 | tee /tmp/soci-build.log
+          echo "=== CACHED line count (cache reuse signal) ==="
+          grep -c "CACHED" /tmp/soci-build.log || echo 0
+          echo "=== any soci/index mentions in build log ==="
+          grep -i "soci\|index" /tmp/soci-build.log || echo "(no soci/index lines)"
+
+      - name: "Step 3: inspect registry for SOCI index"
+        run: |
+          set -x
+          docker login "$REG" -u x-token -p "$DEPOT_TOKEN"
+          echo "=== imagetools inspect (manifests/referrers) ==="
+          docker buildx imagetools inspect "$REG/soci-test:t1" || true
+          echo "=== raw index ==="
+          docker buildx imagetools inspect --raw "$REG/soci-test:t1" || true
