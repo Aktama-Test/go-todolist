@@ -1,0 +1,75 @@
+name: spotlight-reindex-timing
+
+on:
+  workflow_dispatch:
+
+jobs:
+  measure:
+    runs-on: depot-macos-26
+    timeout-minutes: 50
+    steps:
+      - name: Environment
+        run: |
+          sw_vers
+          hostname
+          echo "--- disk usage on / ---"
+          df -h / /System/Volumes/Data || true
+          echo "--- file count estimate on Data volume ---"
+          sudo du -a -d 0 /System/Volumes/Data 2>/dev/null | tail -1 || true
+
+      - name: Baseline Spotlight state
+        run: |
+          echo "=== mdutil -a -s (all volumes) ==="
+          sudo mdutil -a -s || true
+          echo "=== mdfind baseline count (should be ~0 if disabled) ==="
+          mdfind -count "kMDItemFSName == '*'" || true
+
+      - name: Re-enable Spotlight and time full re-index
+        run: |
+          set -x
+          START=$(date +%s)
+
+          sudo mdutil -a -i on || true
+          sudo mdutil -a -E     || true
+
+          set +x
+          echo "Commands returned. Now polling until the index stops growing."
+          echo "elapsed_s | mdutil_status | mdfind_count"
+
+          PREV=-1
+          STABLE=0
+          SETTLED_AT=""
+          # Poll every 15s for up to ~45 min (180 iterations)
+          for i in $(seq 1 180); do
+            sleep 15
+            NOW=$(date +%s)
+            ELAPSED=$((NOW - START))
+            STATUS=$(sudo mdutil -s / 2>/dev/null | tr '\n' ' ')
+            COUNT=$(mdfind -count "kMDItemFSName == '*'" 2>/dev/null || echo "err")
+            echo "${ELAPSED}s | ${STATUS} | ${COUNT}"
+
+            # Plateau detection: count > 0 and unchanged for 4 consecutive polls (60s)
+            if [ "$COUNT" != "err" ] && [ "$COUNT" -gt 0 ] 2>/dev/null; then
+              if [ "$COUNT" = "$PREV" ]; then
+                STABLE=$((STABLE + 1))
+              else
+                STABLE=0
+              fi
+              PREV="$COUNT"
+              if [ "$STABLE" -ge 4 ] && [ -z "$SETTLED_AT" ]; then
+                SETTLED_AT="$ELAPSED"
+                echo ">>> Index appears SETTLED at ~${SETTLED_AT}s (count stable at ${COUNT} for 60s)"
+                break
+              fi
+            fi
+          done
+
+          echo "=================================================="
+          if [ -n "$SETTLED_AT" ]; then
+            echo "RESULT: Spotlight index usable after ~${SETTLED_AT}s ($((SETTLED_AT/60))m$((SETTLED_AT%60))s)"
+          else
+            echo "RESULT: index did not clearly settle within the polling window"
+          fi
+          echo "Final mdfind count: $(mdfind -count "kMDItemFSName == '*'" 2>/dev/null)"
+          echo "Final status:"
+          sudo mdutil -a -s || true
