@@ -1,0 +1,48 @@
+name: gz sim repro (Depot CI)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [test/gz-sim-repro]
+
+jobs:
+  gz-sim:
+    runs-on: depot-ubuntu-latest
+    container:
+      image: ros:jazzy
+    steps:
+      - name: env probe
+        shell: bash
+        run: |
+          echo "--- ruby ---"
+          which ruby || true
+          ruby --version || true
+          echo "--- id ---"
+          id
+          echo "--- HOME/euid ---"
+          echo "HOME=$HOME"
+          getent passwd $(id -u) || true
+          echo "--- /dev/shm ---"
+          df -h /dev/shm || true
+          mount | grep /dev/shm || true
+
+      - name: install gz-sim-vendor
+        shell: bash
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends ros-jazzy-gz-sim-vendor
+
+      - name: dump argv as Ruby sees it
+        shell: bash
+        run: |
+          ruby -e 'p ARGV' -- -s -z 10000 /tmp/fake-world.sdf
+
+      - name: run gz sim -s -z 10000 (shipped world)
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          WORLD=/opt/ros/jazzy/opt/gz_sim_vendor/share/gz/gz-sim8/worlds/shapes.sdf
+          echo "World: $WORLD"
+          set +e
+          timeout 15 /opt/ros/jazzy/opt/gz_tools_vendor/bin/gz sim -s -z 10000 "$WORLD"
+          echo "exit=$?"
