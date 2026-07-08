@@ -37,3 +37,5 @@ go test ./...
 Tests use Go's built-in `testing` package with no external dependencies. Each test creates a temporary SQLite database that is automatically cleaned up.
 
 <!-- pathfilter repro: unrelated change, does NOT touch go.mod -->
+
+<!-- re-trigger synchronize after main divergence -->
