@@ -1,0 +1,42 @@
+name: tc-bench-gha
+on:
+  push:
+    branches:
+      - tc-bench/run
+  workflow_dispatch: {}
+jobs:
+  bench:
+    runs-on: depot-ubuntu-24.04-8
+    steps:
+      - uses: actions/checkout@v4
+      - name: env info
+        run: |
+          echo "=== CPU ==="; lscpu | grep -E "Model name|Thread\(s\) per core|Core\(s\) per socket|^CPU\(s\)"
+          echo "=== Docker ==="; docker info 2>/dev/null | grep -iE "Server Version|Storage Driver|Cgroup|Total Memory|CPUs|Runtime" || true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: install gradle
+        run: |
+          curl -sSL https://services.gradle.org/distributions/gradle-8.10.2-bin.zip -o /tmp/g.zip
+          sudo unzip -q /tmp/g.zip -d /opt
+          echo "/opt/gradle-8.10.2/bin" >> "$GITHUB_PATH"
+      - name: pre-pull images (untimed)
+        run: |
+          docker pull cockroachdb/cockroach:v24.1.6
+          docker pull postgres:16
+          docker pull valkey/valkey:8
+          docker pull testcontainers/ryuk:0.9.0 || true
+      - name: generate project
+        run: ROOT=genproj NCOCKROACH=19 NPOSTGRES=4 NVALKEY=2 bash tc-bench/gen.sh
+      - name: run + time
+        run: |
+          cd genproj
+          t0=$(date +%s)
+          gradle test --parallel --no-build-cache --console=plain 2>&1 | tee /tmp/out.txt || true
+          t1=$(date +%s)
+          echo "TOTAL_WALL_SECONDS=$((t1-t0))"
+          echo "=== per-container start ms ==="; grep -oE "CONTAINER_START_MS [a-z0-9]+ [0-9]+" /tmp/out.txt | sort -t' ' -k3 -n
+          echo "=== count ==="; grep -c "CONTAINER_START_MS" /tmp/out.txt || true
+          echo "=== gradle summary ==="; grep -E "BUILD SUCCESSFUL|BUILD FAILED|actionable tasks" /tmp/out.txt || true
