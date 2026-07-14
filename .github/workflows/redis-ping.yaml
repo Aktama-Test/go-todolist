@@ -1,0 +1,43 @@
+name: redis-ping-gha
+on:
+  push:
+    branches:
+      - tc-bench/run
+  workflow_dispatch: {}
+jobs:
+  ping:
+    runs-on: depot-ubuntu-24.04-8
+    steps:
+      - uses: actions/checkout@v4
+      - name: env
+        run: |
+          lscpu | grep -E "Model name|Thread\(s\) per core"
+          docker info 2>/dev/null | grep -iE "Server Version|Storage Driver" || true
+      - name: pre-pull
+        run: docker pull valkey/valkey:8 >/dev/null 2>&1 || true
+      - name: redis ping round-trip
+        run: |
+          cat > /tmp/ping.py <<'PY'
+          import socket, time, sys
+          N = int(sys.argv[1]); host = sys.argv[2]; port = int(sys.argv[3]); label = sys.argv[4]
+          s = None
+          for _ in range(60):
+              try: s = socket.create_connection((host, port), timeout=2); break
+              except OSError: time.sleep(0.5)
+          if not s: print(f"RESULT {label}: NO CONNECTION"); sys.exit(1)
+          s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+          for _ in range(1000): s.sendall(b"PING\r\n"); s.recv(64)   # warmup
+          t = time.time()
+          for _ in range(N): s.sendall(b"PING\r\n"); s.recv(64)
+          dt = time.time() - t
+          print(f"RESULT {label}: {N} in {dt:.3f}s = {dt/N*1e6:.1f} us/rtt = {N/dt:.0f} ops/s")
+          PY
+          echo "--- bridge + port-map (testcontainers path) ---"
+          docker rm -f vk >/dev/null 2>&1 || true
+          docker run -d --name vk -p 6379:6379 valkey/valkey:8 >/dev/null
+          python3 /tmp/ping.py 20000 127.0.0.1 6379 bridge-portmap
+          docker rm -f vk >/dev/null 2>&1 || true
+          echo "--- host network (no port-forward) ---"
+          docker run -d --name vk2 --network host valkey/valkey:8 >/dev/null
+          python3 /tmp/ping.py 20000 127.0.0.1 6379 host-network
+          docker rm -f vk2 >/dev/null 2>&1 || true
