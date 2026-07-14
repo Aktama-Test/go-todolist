@@ -30,8 +30,9 @@ jobs:
       - name: run + time
         run: |
           cd genproj
+          echo "api.version=1.40" > "$HOME/.docker-java.properties"
           t0=$(date +%s)
-          gradle test --parallel --no-build-cache --console=plain 2>&1 | tee /tmp/out.txt || true
+          gradle test --parallel --no-build-cache --no-daemon --console=plain 2>&1 | tee /tmp/out.txt || true
           t1=$(date +%s)
           echo "TOTAL_WALL_SECONDS=$((t1-t0))"
           echo "=== per-container start ms ==="; grep -oE "CONTAINER_START_MS [a-z0-9]+ [0-9]+" /tmp/out.txt | sort -t' ' -k3 -n
