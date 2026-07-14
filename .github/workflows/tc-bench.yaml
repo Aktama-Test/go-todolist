@@ -40,3 +40,4 @@ jobs:
           echo "=== per-container start ms ==="; grep -oE "CONTAINER_START_MS [a-z0-9]+ [0-9]+" /tmp/out.txt | sort -t' ' -k3 -n
           echo "=== count ==="; grep -c "CONTAINER_START_MS" /tmp/out.txt || true
           echo "=== gradle summary ==="; grep -E "BUILD SUCCESSFUL|BUILD FAILED|actionable tasks" /tmp/out.txt || true
+          grep -q "BUILD SUCCESSFUL" /tmp/out.txt || { echo "GRADLE FAILED"; exit 1; }

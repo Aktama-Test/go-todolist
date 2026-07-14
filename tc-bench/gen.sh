@@ -31,6 +31,7 @@ subprojects {
   test {
     useJUnitPlatform()
     testLogging { showStandardStreams = true; exceptionFormat 'full' }
+    environment 'DOCKER_API_VERSION', '1.40'
   }
 }
 EOF
