@@ -1,0 +1,50 @@
+name: db-latency-gha
+on:
+  push:
+    branches:
+      - tc-bench/run
+  workflow_dispatch: {}
+jobs:
+  dbq:
+    runs-on: depot-ubuntu-24.04-8
+    steps:
+      - uses: actions/checkout@v4
+      - name: env
+        run: |
+          lscpu | grep -E "Model name|Thread\(s\) per core"
+          docker info 2>/dev/null | grep -iE "Server Version|Storage Driver" || true
+      - name: setup
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq python3-psycopg2
+          docker pull postgres:16 >/dev/null 2>&1 || true
+          docker pull cockroachdb/cockroach:v24.1.6 >/dev/null 2>&1 || true
+      - name: db query round-trip latency
+        run: |
+          cat > /tmp/dbq.py <<'PY'
+          import psycopg2, time, sys
+          dsn, N, label, q = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+          cn = None
+          for _ in range(60):
+              try: cn = psycopg2.connect(dsn); break
+              except Exception: time.sleep(0.5)
+          if not cn: print(f"RESULT {label}: NO CONNECTION"); sys.exit(1)
+          cn.autocommit = True; cur = cn.cursor()
+          for _ in range(300): cur.execute(q); cur.fetchall()   # warmup
+          t = time.time()
+          for _ in range(N): cur.execute(q); cur.fetchall()
+          dt = time.time() - t
+          print(f"RESULT {label}: {N} in {dt:.3f}s = {dt/N*1e6:.1f} us/query = {N/dt:.0f} q/s")
+          PY
+          echo "--- postgres (mapped port) ---"
+          docker rm -f pg >/dev/null 2>&1 || true
+          docker run -d --name pg -p 5432:5432 -e POSTGRES_PASSWORD=test postgres:16 >/dev/null
+          PGDSN="host=127.0.0.1 port=5432 user=postgres password=test dbname=postgres"
+          python3 /tmp/dbq.py "$PGDSN" 3000 pg-light "SELECT 1"
+          python3 /tmp/dbq.py "$PGDSN" 800 pg-medium "SELECT count(*) FROM generate_series(1,20000)"
+          docker rm -f pg >/dev/null 2>&1 || true
+          echo "--- cockroach (mapped port) ---"
+          docker rm -f cr >/dev/null 2>&1 || true
+          docker run -d --name cr -p 26257:26257 cockroachdb/cockroach:v24.1.6 start-single-node --insecure >/dev/null
+          CRDSN="host=127.0.0.1 port=26257 user=root dbname=defaultdb sslmode=disable"
+          python3 /tmp/dbq.py "$CRDSN" 3000 cr-light "SELECT 1"
+          docker rm -f cr >/dev/null 2>&1 || true
