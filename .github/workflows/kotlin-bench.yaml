@@ -1,0 +1,33 @@
+name: kotlin-bench-gha
+on:
+  push:
+    branches:
+      - tc-bench/run
+  workflow_dispatch: {}
+jobs:
+  kbench:
+    runs-on: depot-ubuntu-24.04-8
+    steps:
+      - uses: actions/checkout@v4
+      - name: cpu info
+        run: lscpu | grep -E "Model name|Thread\(s\) per core|Core\(s\) per socket|^CPU\(s\)"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: install gradle
+        run: |
+          curl -sSL https://services.gradle.org/distributions/gradle-8.10.2-bin.zip -o /tmp/g.zip
+          sudo unzip -q /tmp/g.zip -d /opt
+          echo "/opt/gradle-8.10.2/bin" >> "$GITHUB_PATH"
+      - name: generate project
+        run: ROOT=kproj MODULES=8 FILES_PER_MODULE=300 bash tc-bench/gen-kotlin.sh
+      - name: compile + time
+        run: |
+          cd kproj
+          t0=$(date +%s)
+          gradle compileKotlin --parallel --no-build-cache --no-daemon --console=plain 2>&1 | tee /tmp/out.txt || true
+          t1=$(date +%s)
+          echo "TOTAL_WALL_SECONDS=$((t1-t0))"
+          grep -E "BUILD SUCCESSFUL|BUILD FAILED|actionable tasks" /tmp/out.txt || true
+          grep -q "BUILD SUCCESSFUL" /tmp/out.txt || { echo "GRADLE FAILED"; exit 1; }
