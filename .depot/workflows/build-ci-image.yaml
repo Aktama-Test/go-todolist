@@ -4,7 +4,8 @@
 # No changes were necessary.
 
 name: Build CI Image
-on: push
+on:
+  workflow_dispatch: {}
 jobs:
   build-ci-image:
     runs-on: depot-ubuntu-latest

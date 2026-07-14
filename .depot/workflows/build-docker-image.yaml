@@ -1,6 +1,7 @@
 
 name: Build Docker Image
-on: push
+on:
+  workflow_dispatch: {}
 jobs:
   build-docker-image:
     runs-on: t67llm9p7m.registry.depot.dev/my-ci-image:latest
