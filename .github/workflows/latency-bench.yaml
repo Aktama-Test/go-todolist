@@ -1,0 +1,35 @@
+name: latency-bench-gha
+on:
+  push:
+    branches:
+      - tc-bench/run
+  workflow_dispatch: {}
+jobs:
+  lat:
+    runs-on: depot-ubuntu-24.04-8
+    steps:
+      - uses: actions/checkout@v4
+      - name: env
+        run: |
+          lscpu | grep -E "Model name|Thread\(s\) per core"
+          docker info 2>/dev/null | grep -iE "Server Version|Storage Driver" || true
+      - name: pre-pull
+        run: docker pull python:3-alpine >/dev/null 2>&1 || true
+      - name: fsync latency probes
+        run: |
+          cat > /tmp/fsync.py <<'PY'
+          import os, time, sys
+          N = int(sys.argv[1]); path = sys.argv[2]
+          f = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
+          b = b"x" * 4096
+          t = time.time()
+          for _ in range(N):
+              os.write(f, b); os.fsync(f); os.lseek(f, 0, 0)
+          dt = time.time() - t
+          os.close(f); os.remove(path)
+          print(f"RESULT {sys.argv[3]}: {N} fsyncs in {dt:.3f}s = {dt/N*1e6:.0f} us/fsync = {N/dt:.0f} ops/s")
+          PY
+          echo "--- host filesystem (job workdir) ---"
+          python3 /tmp/fsync.py 3000 /tmp/probe.dat host
+          echo "--- inside container (overlay writable layer = DB path) ---"
+          docker run --rm -v /tmp/fsync.py:/fsync.py:ro python:3-alpine python3 /fsync.py 3000 /probe.dat container-overlay
