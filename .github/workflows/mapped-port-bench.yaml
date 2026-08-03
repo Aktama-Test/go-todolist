@@ -28,8 +28,9 @@ jobs:
       - name: Discover service container bridge IPs
         id: ips
         run: |
-          RCID=$(docker ps --filter "label=github-service-name=redis" --format '{{.ID}}' | head -1)
-          MCID=$(docker ps --filter "label=github-service-name=mysql" --format '{{.ID}}' | head -1)
+          RCID="${{ job.services.redis.id }}"
+          MCID="${{ job.services.mysql.id }}"
+          echo "redis container=$RCID ; mysql container=$MCID"
           RIP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$RCID")
           MIP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$MCID")
           echo "redis_ip=$RIP" >> "$GITHUB_OUTPUT"
