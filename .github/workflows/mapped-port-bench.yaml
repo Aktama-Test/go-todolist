@@ -1,0 +1,51 @@
+name: mapped-port-bench
+on:
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: depot-ubuntu-24.04-4
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+      mysql:
+        image: mysql:8.4.9
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: bench
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -proot" --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - name: Install clients
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq redis-tools default-mysql-client >/dev/null
+
+      - name: Discover service container bridge IPs
+        id: ips
+        run: |
+          RCID=$(docker ps --filter "label=github-service-name=redis" --format '{{.ID}}' | head -1)
+          MCID=$(docker ps --filter "label=github-service-name=mysql" --format '{{.ID}}' | head -1)
+          RIP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$RCID")
+          MIP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$MCID")
+          echo "redis_ip=$RIP" >> "$GITHUB_OUTPUT"
+          echo "mysql_ip=$MIP" >> "$GITHUB_OUTPUT"
+          echo "redis bridge ip=$RIP ; mysql bridge ip=$MIP"
+
+      - name: Redis PING round-trip (single connection, 50k reqs x3)
+        run: |
+          echo "##### REDIS PING via 127.0.0.1:6379 (published port -> docker-proxy)"
+          for i in 1 2 3; do redis-benchmark -h 127.0.0.1 -p 6379 -n 50000 -c 1 -t ping -q; done
+          echo "##### REDIS PING via ${{ steps.ips.outputs.redis_ip }}:6379 (direct bridge IP, no docker-proxy)"
+          for i in 1 2 3; do redis-benchmark -h ${{ steps.ips.outputs.redis_ip }} -p 6379 -n 50000 -c 1 -t ping -q; done
+
+      - name: MySQL SELECT 1 round-trip (single thread, 10k queries)
+        run: |
+          echo "##### MYSQL SELECT 1 via 127.0.0.1:3306 (published port -> docker-proxy)"
+          mysqlslap -h 127.0.0.1 -P 3306 -u root -proot --create-schema=bench --query="SELECT 1" --number-of-queries=10000 --concurrency=1 2>&1 | grep -i "seconds"
+          echo "##### MYSQL SELECT 1 via ${{ steps.ips.outputs.mysql_ip }}:3306 (direct bridge IP)"
+          mysqlslap -h ${{ steps.ips.outputs.mysql_ip }} -P 3306 -u root -proot --create-schema=bench --query="SELECT 1" --number-of-queries=10000 --concurrency=1 2>&1 | grep -i "seconds"
