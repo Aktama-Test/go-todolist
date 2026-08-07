@@ -4,6 +4,8 @@
 name: Merge Queue Context (Depot CI)
 on:
   merge_group:
+  # The required check has to report on the PR as well, or GitHub refuses to enqueue.
+  pull_request:
 jobs:
   depot-context:
     runs-on: depot-ubuntu-24.04
