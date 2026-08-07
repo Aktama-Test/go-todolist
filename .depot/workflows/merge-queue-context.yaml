@@ -1,0 +1,23 @@
+# DEP-5695 verification. Dumps the merge_group context on Depot CI so it can be
+# compared against the GitHub Actions run of .github/workflows/merge-queue-context.yaml,
+# which prints the same values from the same merge group.
+name: Merge Queue Context (Depot CI)
+on:
+  merge_group:
+jobs:
+  context:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      # Values are bracketed so an empty string is visible in the log.
+      - name: Dump merge_group context
+        run: |
+          echo "side=depot-ci"
+          echo "event_name=[${{ github.event_name }}]"
+          echo "ref=[${{ github.ref }}]"
+          echo "sha=[${{ github.sha }}]"
+          echo "base_ref=[${{ github.base_ref }}]"
+          echo "head_ref=[${{ github.head_ref }}]"
+          echo "mg_base_sha=[${{ github.event.merge_group.base_sha }}]"
+          echo "mg_head_sha=[${{ github.event.merge_group.head_sha }}]"
+          echo "mg_base_ref=[${{ github.event.merge_group.base_ref }}]"
+          echo "mg_head_commit_message=[${{ github.event.merge_group.head_commit.message }}]"
