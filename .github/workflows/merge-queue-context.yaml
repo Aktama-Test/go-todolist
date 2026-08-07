@@ -4,8 +4,10 @@
 name: Merge Queue Context (GitHub)
 on:
   merge_group:
+  # The required check has to report on the PR as well, or GitHub refuses to enqueue.
+  pull_request:
 jobs:
-  context:
+  github-context:
     runs-on: ubuntu-latest
     steps:
       # Values are bracketed so an empty string is visible in the log.
