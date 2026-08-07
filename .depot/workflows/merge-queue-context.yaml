@@ -5,7 +5,7 @@ name: Merge Queue Context (Depot CI)
 on:
   merge_group:
 jobs:
-  context:
+  depot-context:
     runs-on: depot-ubuntu-24.04
     steps:
       # Values are bracketed so an empty string is visible in the log.
