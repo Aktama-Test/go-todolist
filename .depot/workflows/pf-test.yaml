@@ -1,0 +1,10 @@
+name: pf-test
+on:
+  pull_request:
+    paths:
+      - "go.mod"
+jobs:
+  pathfiltered:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - run: echo "path-filtered workflow ran (should only run when go.mod changes)"

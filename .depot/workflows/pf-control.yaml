@@ -1,0 +1,8 @@
+name: pf-control
+on:
+  pull_request:
+jobs:
+  control:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - run: echo "control workflow ran (no paths filter)"
