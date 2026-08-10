@@ -1,0 +1,77 @@
+name: claude-code npm EACCES repro (T-10708)
+on:
+  workflow_dispatch:
+
+jobs:
+  repro:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [depot-ubuntu-24.04, depot-ubuntu-22.04, ubuntu-latest]
+    name: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Environment
+        run: |
+          id
+          echo "node:       $(command -v node) $(node --version)"
+          echo "npm:        $(command -v npm) $(npm --version)"
+          echo "npm prefix: $(npm config get prefix)"
+          echo "npm root -g:$(npm root -g)"
+          echo "npm cache:  $(npm config get cache)"
+          echo "claude:     $(command -v claude || echo NONE)"
+
+      - name: Global npm dir permissions
+        run: |
+          echo "--- dirs ---"
+          ls -ld /usr/local /usr/local/lib /usr/local/bin "$(npm root -g)"
+          echo "--- hidden lockfile ---"
+          ls -l "$(npm root -g)/.package-lock.json" || echo "no hidden lockfile"
+          echo "--- contents of global node_modules ---"
+          ls -la "$(npm root -g)"
+          echo "--- npm cache ---"
+          ls -ld "$HOME/.npm" 2>/dev/null || echo "no ~/.npm"
+
+      - name: Repro (customer snippet, verbatim)
+        id: repro
+        continue-on-error: true
+        run: |
+          if command -v claude >/dev/null 2>&1; then
+            echo "claude already on PATH: $(command -v claude)"
+            claude --version
+            echo "Skipping npm install"
+          else
+            echo "claude not found on PATH; installing @anthropic-ai/claude-code"
+            npm install -g @anthropic-ai/claude-code
+            claude --version
+          fi
+
+      - name: Post-repro permissions
+        if: always()
+        run: |
+          ls -ld "$(npm root -g)" || true
+          ls -l "$(npm root -g)/.package-lock.json" 2>/dev/null || echo "no hidden lockfile"
+          ls -ld "$(npm root -g)/@anthropic-ai" 2>/dev/null || echo "no @anthropic-ai dir"
+
+      - name: Workaround A - native installer (no root)
+        id: native
+        continue-on-error: true
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/claude" --version
+
+      - name: Workaround B - sudo npm install -g
+        id: sudonpm
+        continue-on-error: true
+        run: |
+          sudo npm install -g @anthropic-ai/claude-code
+          /usr/local/bin/claude --version
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "runner:                    ${{ matrix.runner }}"
+          echo "repro (plain npm -g):      ${{ steps.repro.outcome }}"
+          echo "workaround A (native):     ${{ steps.native.outcome }}"
+          echo "workaround B (sudo npm -g):${{ steps.sudonpm.outcome }}"
