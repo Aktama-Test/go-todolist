@@ -11,34 +11,32 @@ jobs:
     name: ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Environment
+      - name: Simulate agentd removeClaudeCode (what Tractian's org gets)
         run: |
-          id
-          echo "npm:        $(command -v npm) $(npm --version)"
-          echo "npm root -g:$(npm root -g)"
-          echo "claude:     $(command -v claude || echo NONE)"
-          echo "--- global node_modules ---"
-          ls -ld "$(npm root -g)"
-          ls -ld "$(npm root -g)/@anthropic-ai" 2>/dev/null || echo "no @anthropic-ai dir"
-          ls -la "$(npm root -g)/@anthropic-ai" 2>/dev/null || true
-          echo "--- claude binary ---"
+          echo "--- before ---"
+          ls -ld /usr/local/lib/node_modules/@anthropic-ai 2>/dev/null || echo "no @anthropic-ai dir"
           ls -l /usr/local/bin/claude 2>/dev/null || echo "no /usr/local/bin/claude"
-          readlink -f /usr/local/bin/claude 2>/dev/null || true
+          echo "--- running agentd's exact removal sequence as root ---"
+          sudo npm uninstall --global @anthropic-ai/claude-code || true
+          sudo rm -f /usr/local/bin/claude
+          echo "--- after ---"
+          ls -ld /usr/local/lib/node_modules/@anthropic-ai 2>/dev/null || echo "no @anthropic-ai dir (cleaned up)"
+          ls -la /usr/local/lib/node_modules/@anthropic-ai 2>/dev/null || true
+          echo "claude on PATH: $(command -v claude || echo NONE)"
 
-      - name: Repro - unguarded npm install -g @anthropic-ai/claude-code
+      - name: Repro (customer snippet, verbatim)
         id: repro
         continue-on-error: true
-        run: npm install -g @anthropic-ai/claude-code
-
-      - name: Control - unguarded npm install -g of an unrelated scoped pkg
-        id: control_scoped
-        continue-on-error: true
-        run: npm install -g @sindresorhus/is
-
-      - name: Control - unguarded npm install -g of an unscoped pkg
-        id: control_unscoped
-        continue-on-error: true
-        run: npm install -g is-odd
+        run: |
+          if command -v claude >/dev/null 2>&1; then
+            echo "claude already on PATH: $(command -v claude)"
+            claude --version
+            echo "Skipping npm install"
+          else
+            echo "claude not found on PATH; installing @anthropic-ai/claude-code"
+            npm install -g @anthropic-ai/claude-code
+            claude --version
+          fi
 
       - name: Workaround A - native installer (no root)
         id: native
@@ -48,19 +46,9 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/claude" --version
 
-      - name: Workaround B - sudo npm install -g
-        id: sudonpm
-        continue-on-error: true
-        run: |
-          sudo npm install -g @anthropic-ai/claude-code
-          /usr/local/bin/claude --version
-
       - name: Summary
         if: always()
         run: |
-          echo "runner:                     ${{ matrix.runner }}"
-          echo "repro   claude-code:        ${{ steps.repro.outcome }}"
-          echo "control scoped pkg:         ${{ steps.control_scoped.outcome }}"
-          echo "control unscoped pkg:       ${{ steps.control_unscoped.outcome }}"
-          echo "workaround A native:        ${{ steps.native.outcome }}"
-          echo "workaround B sudo npm -g:   ${{ steps.sudonpm.outcome }}"
+          echo "runner:                ${{ matrix.runner }}"
+          echo "repro after removal:   ${{ steps.repro.outcome }}"
+          echo "workaround A native:   ${{ steps.native.outcome }}"
