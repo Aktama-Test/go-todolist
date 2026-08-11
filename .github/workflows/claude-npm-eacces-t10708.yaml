@@ -3,52 +3,40 @@ on:
   workflow_dispatch:
 
 jobs:
-  repro:
+  verify:
     strategy:
       fail-fast: false
       matrix:
-        runner: [depot-ubuntu-24.04, depot-ubuntu-22.04, ubuntu-latest]
+        runner: [depot-ubuntu-24.04, depot-ubuntu-22.04]
     name: ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Simulate agentd removeClaudeCode (what Tractian's org gets)
+      - name: agentd version and scope dir permissions
         run: |
-          echo "--- before ---"
-          ls -ld /usr/local/lib/node_modules/@anthropic-ai 2>/dev/null || echo "no @anthropic-ai dir"
-          ls -l /usr/local/bin/claude 2>/dev/null || echo "no /usr/local/bin/claude"
-          echo "--- running agentd's exact removal sequence as root ---"
-          sudo npm uninstall --global @anthropic-ai/claude-code || true
-          sudo rm -f /usr/local/bin/claude
-          echo "--- after ---"
-          ls -ld /usr/local/lib/node_modules/@anthropic-ai 2>/dev/null || echo "no @anthropic-ai dir (cleaned up)"
-          ls -la /usr/local/lib/node_modules/@anthropic-ai 2>/dev/null || true
+          /usr/local/bin/agentd --version 2>/dev/null || echo "agentd --version unavailable"
+          echo "--- scope dir (want 0777 after the fix, was 0755) ---"
+          ls -ld /usr/local/lib/node_modules /usr/local/lib/node_modules/@anthropic-ai 2>&1
           echo "claude on PATH: $(command -v claude || echo NONE)"
 
-      - name: Repro (customer snippet, verbatim)
-        id: repro
+      - name: Variant 1 - unguarded install over the preinstalled copy (was EACCES rename)
+        id: rename_variant
         continue-on-error: true
-        run: |
-          if command -v claude >/dev/null 2>&1; then
-            echo "claude already on PATH: $(command -v claude)"
-            claude --version
-            echo "Skipping npm install"
-          else
-            echo "claude not found on PATH; installing @anthropic-ai/claude-code"
-            npm install -g @anthropic-ai/claude-code
-            claude --version
-          fi
+        run: npm install -g @anthropic-ai/claude-code
 
-      - name: Workaround A - native installer (no root)
-        id: native
+      - name: Simulate the removeClaudeCode state, then retry (was EACCES mkdir)
+        id: mkdir_variant
         continue-on-error: true
         run: |
-          curl -fsSL https://claude.ai/install.sh | bash
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/claude" --version
+          sudo npm uninstall --global @anthropic-ai/claude-code || true
+          sudo rm -f /usr/local/bin/claude
+          echo "--- leftover scope dir ---"
+          ls -ld /usr/local/lib/node_modules/@anthropic-ai 2>&1 || echo "removed"
+          npm install -g @anthropic-ai/claude-code
+          claude --version
 
       - name: Summary
         if: always()
         run: |
-          echo "runner:                ${{ matrix.runner }}"
-          echo "repro after removal:   ${{ steps.repro.outcome }}"
-          echo "workaround A native:   ${{ steps.native.outcome }}"
+          echo "runner:                 ${{ matrix.runner }}"
+          echo "variant 1 (rename):     ${{ steps.rename_variant.outcome }}"
+          echo "variant 2 (mkdir):      ${{ steps.mkdir_variant.outcome }}"
