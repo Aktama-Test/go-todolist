@@ -1,0 +1,10 @@
+name: rename-filter-OLD
+on:
+  pull_request:
+    paths:
+      - 'rename-probe-a/**'
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo OLD path filter matched

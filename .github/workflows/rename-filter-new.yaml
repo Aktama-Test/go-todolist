@@ -1,0 +1,10 @@
+name: rename-filter-NEW
+on:
+  pull_request:
+    paths:
+      - 'rename-probe-b/**'
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo NEW path filter matched
