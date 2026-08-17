@@ -45,8 +45,10 @@ jobs:
 
           node --test "${test_files[@]}"
 
-          echo "--- what the tests actually wrote (redirected file) ---"
-          cat "$GITHUB_STEP_SUMMARY"
+          echo "--- resolved GITHUB_STEP_SUMMARY inside the step ---"
+          echo "$GITHUB_STEP_SUMMARY"
+          echo "--- does the override path exist? ---"
+          ls -la /home/runner/work/_temp/test-step-summary.md || echo "OVERRIDE PATH DOES NOT EXIST"
 
           echo "--- GitHub's own summary file for this step ---"
           for f in /home/runner/work/_temp/_runner_file_commands/step_summary_*; do
