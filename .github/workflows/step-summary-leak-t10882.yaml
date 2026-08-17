@@ -45,5 +45,12 @@ jobs:
 
           node --test "${test_files[@]}"
 
-          echo "--- what the tests actually wrote ---"
+          echo "--- what the tests actually wrote (redirected file) ---"
           cat "$GITHUB_STEP_SUMMARY"
+
+          echo "--- GitHub's own summary file for this step ---"
+          for f in /home/runner/work/_temp/_runner_file_commands/step_summary_*; do
+            echo "== $f =="
+            wc -c "$f"
+            cat "$f"
+          done
