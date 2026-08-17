@@ -1,0 +1,44 @@
+name: unit tests leaking into the job summary repro (T-10882)
+on:
+  workflow_dispatch:
+
+jobs:
+  unsandboxed:
+    name: unsandboxed (expect a Rollout status summary)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Discover and run tests
+        run: |
+          set -euo pipefail
+
+          test_files=()
+          while IFS= read -r -d '' test_file; do
+            test_files+=("$test_file")
+          done < <(find t10882 -type f -name '*.test.mjs' -print0)
+
+          node --test "${test_files[@]}"
+
+  sandboxed:
+    name: sandboxed (expect no summary)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Discover and run tests
+        env:
+          GITHUB_STEP_SUMMARY: ${{ runner.temp }}/test-step-summary.md
+          GITHUB_OUTPUT: ${{ runner.temp }}/test-output.txt
+          GITHUB_ENV: ${{ runner.temp }}/test-env.txt
+          GITHUB_STATE: ${{ runner.temp }}/test-state.txt
+        run: |
+          set -euo pipefail
+
+          test_files=()
+          while IFS= read -r -d '' test_file; do
+            test_files+=("$test_file")
+          done < <(find t10882 -type f -name '*.test.mjs' -print0)
+
+          node --test "${test_files[@]}"
+
+          echo "--- what the tests actually wrote ---"
+          cat "$GITHUB_STEP_SUMMARY"
