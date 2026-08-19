@@ -1,0 +1,76 @@
+name: mysqld runtime dir ownership repro (T-10926)
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - name: State before anything touches mysql
+        run: |
+          echo "--- user ---"
+          id
+
+          echo "--- /run mount ---"
+          findmnt /run || true
+
+          echo "--- /var/run/mysqld ---"
+          if [ -e /var/run/mysqld ]; then
+            stat -c '%n owner=%U group=%G mode=%a' /var/run/mysqld
+          else
+            echo "ABSENT"
+          fi
+
+          echo "--- mysql packages ---"
+          dpkg-query -W -f '${Package} ${Version} ${Status}\n' 'mysql-server*' 2>&1 || true
+
+          echo "--- mysql.service ---"
+          systemctl is-enabled mysql 2>&1 || true
+          systemctl is-active mysql 2>&1 || true
+
+          echo "--- datadir ---"
+          sudo stat -c '%n owner=%U group=%G mode=%a' /var/lib/mysql 2>&1 || echo "no datadir"
+          sudo ls /var/lib/mysql 2>&1 | head -5 || true
+
+          echo "--- tmpfiles.d entries mentioning mysql ---"
+          grep -rl mysqld /usr/lib/tmpfiles.d /etc/tmpfiles.d 2>/dev/null || echo "none"
+
+          echo "--- can the runner write /usr/sbin? ---"
+          stat -c '%n owner=%U group=%G mode=%a' /usr/sbin
+
+      # Verbatim from the customer's Depot CI workflow, including `shell: bash -e {0}`,
+      # which is what GitHub uses for a plain `run:` block.
+      - name: Customer step, unmodified
+        id: customer
+        continue-on-error: true
+        shell: bash -e {0}
+        run: |
+          echo '#!/bin/sh\nexit 0' > /usr/sbin/policy-rc.d && chmod +x /usr/sbin/policy-rc.d
+          sudo apt-get install -y mysql-server
+          sudo chmod 755 /var/run/mysqld
+          sudo useradd -r -s /bin/false mysql || true
+          sudo /etc/init.d/mysql start
+          mysql -e 'CREATE DATABASE app;' -uroot -proot
+
+      - name: State afterwards
+        run: |
+          echo "--- customer step outcome: ${{ steps.customer.outcome }} ---"
+
+          echo "--- /var/run/mysqld ---"
+          if [ -e /var/run/mysqld ]; then
+            stat -c '%n owner=%U group=%G mode=%a' /var/run/mysqld
+            sudo ls -la /var/run/mysqld
+          else
+            echo "ABSENT"
+          fi
+
+          echo "--- mysqld processes ---"
+          pgrep -a mysqld || echo "none running"
+
+          echo "--- mysql error log ---"
+          sudo tail -60 /var/log/mysql/error.log 2>&1 || echo "no error log"
