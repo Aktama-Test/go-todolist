@@ -2,6 +2,7 @@ name: Duplicate synchronize check ownership repro (T-11010)
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 
 concurrency:
   group: dup-sync-t11010-pr-${{ github.event.pull_request.number }}
