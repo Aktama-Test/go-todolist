@@ -1,0 +1,88 @@
+name: BuildKit internal load vertex timing repro (T-11093)
+
+# Measures how long BuildKit's [internal] load vertices take when the build is
+# driven from a Depot CI sandbox versus a Depot GHA runner. Identical file lives
+# in .depot/workflows/ so the same build runs on both sides.
+#
+# Durations come from BuildKit's own "#N DONE Xs" accounting rather than from
+# log line timestamps, which are a rendered progress stream and not a timing
+# source. A single solve keeps vertex numbers unique.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  loadvertex:
+    runs-on: depot-ubuntu-24.04-4
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Depot CLI (pinned)
+        run: |
+          curl -L https://depot.dev/install-cli.sh | sh -s 2.102.7
+          echo "$HOME/.depot/bin" >> "$GITHUB_PATH"
+
+      - name: Report client environment
+        run: |
+          depot version
+          echo "nproc=$(nproc)"
+          uname -a
+          echo "--- cpu ---"; lscpu | grep -E 'Model name|^CPU\(s\)|Thread' || true
+
+      - name: Generate build context (~100 MB, 2000 small files)
+        run: |
+          python3 - <<'PY'
+          import os
+          os.makedirs('ctx/files', exist_ok=True)
+          with open('ctx/files/blob.bin','wb') as f:
+              f.write(os.urandom(80 * 1024 * 1024))
+          for i in range(2000):
+              with open(f'ctx/files/f{i}.bin','wb') as f:
+                  f.write(os.urandom(10 * 1024))
+          PY
+          cat > ctx/Dockerfile <<'EOF'
+          FROM alpine:3.20
+          COPY files /files
+          RUN ls /files | wc -l
+          EOF
+          printf 'node_modules\n.git\n' > ctx/.dockerignore
+          du -sh ctx
+          find ctx -type f | wc -l
+
+      - name: Build three times and report internal load vertex durations
+        env:
+          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+        run: |
+          set -o pipefail
+          for run in 1 2 3; do
+            echo "==================== run $run ===================="
+            start=$(date +%s)
+            depot build \
+              --project 2mtnv574xd \
+              --platform linux/amd64 \
+              --progress plain \
+              --no-cache \
+              --output type=cacheonly \
+              ctx > "build-$run.log" 2>&1 || { echo "BUILD FAILED"; tail -40 "build-$run.log"; exit 1; }
+            end=$(date +%s)
+            echo "total wall clock: $((end - start))s"
+            awk '
+              /^#[0-9]+ \[/  { n=substr($1,2); $1=""; sub(/^ /,""); name[n]=$0 }
+              /^#[0-9]+ DONE/ { n=substr($1,2); d=$3; sub(/s$/,"",d); dur[n]=d }
+              END {
+                for (v in dur)
+                  if (name[v] ~ /\[internal\]/)
+                    printf "  %-50s %6.1fs\n", name[v], dur[v]
+              }
+            ' "build-$run.log" | sort
+          done
+
+      - name: Upload raw build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-ci
+          path: build-*.log
