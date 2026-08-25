@@ -1,0 +1,40 @@
+name: Redis 6379 free repro (T-11136)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    runs-on: depot-ubuntu-24.04-arm-4
+    steps:
+      - name: Arch
+        run: uname -m
+
+      - name: redis-server package and unit state
+        run: |
+          dpkg -l redis-server 2>/dev/null || echo "redis-server not installed"
+          systemctl is-enabled redis-server 2>&1 || true
+          systemctl is-active redis-server 2>&1 || true
+
+      - name: Listeners on 6379
+        run: |
+          sudo ss -lntup | grep -E ':6379\b' && echo "SOMETHING IS LISTENING ON 6379" || echo "6379 is free"
+
+      - name: Publish a container on 6379
+        run: |
+          docker run -d --name redis-check -p 6379:6379 redis:alpine
+          docker port redis-check
+          docker rm -f redis-check
+
+  service-container:
+    runs-on: depot-ubuntu-24.04-arm-4
+    services:
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+    steps:
+      - name: Reach the service container
+        run: |
+          timeout 5 bash -c 'until (exec 3<>/dev/tcp/127.0.0.1/6379); do sleep 1; done'
+          echo "connected to 127.0.0.1:6379"
