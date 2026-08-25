@@ -10,6 +10,11 @@ name: BuildKit internal load vertex timing repro (T-11093)
 
 on:
   workflow_dispatch:
+    inputs:
+      files:
+        description: Number of files in the build context (total bytes held near 100 MB)
+        required: false
+        default: "2000"
 
 jobs:
   loadvertex:
@@ -32,16 +37,26 @@ jobs:
           uname -a
           echo "--- cpu ---"; lscpu | grep -E 'Model name|^CPU\(s\)|Thread' || true
 
-      - name: Generate build context (~100 MB, 2000 small files)
+      - name: Generate build context (~100 MB, N files)
+        env:
+          FILE_COUNT: ${{ inputs.files }}
         run: |
           python3 - <<'PY'
           import os
+          n = int(os.environ.get('FILE_COUNT') or 2000)
+          total = 100 * 1024 * 1024
+          # Hold total bytes roughly constant so only file count varies between runs.
+          size = max(512, total // n)
           os.makedirs('ctx/files', exist_ok=True)
-          with open('ctx/files/blob.bin','wb') as f:
-              f.write(os.urandom(80 * 1024 * 1024))
-          for i in range(2000):
-              with open(f'ctx/files/f{i}.bin','wb') as f:
-                  f.write(os.urandom(10 * 1024))
+          chunk = os.urandom(size)
+          for i in range(n):
+              d = f'ctx/files/d{i // 500}'
+              os.makedirs(d, exist_ok=True)
+              with open(f'{d}/f{i}.bin', 'wb') as f:
+                  # Unique first bytes so each file has a distinct digest and
+                  # content dedup cannot hide per-file cost.
+                  f.write(i.to_bytes(8, 'little') + chunk[8:])
+          print(f'generated {n} files of {size} bytes')
           PY
           cat > ctx/Dockerfile <<'EOF'
           FROM alpine:3.20
