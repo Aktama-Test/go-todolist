@@ -1,0 +1,95 @@
+name: Tailscale source address repro (T-10621)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: IP inside an approved subnet route (blank picks one from table 52)
+        required: false
+      port:
+        description: Port to send a SYN to
+        required: false
+        default: "22"
+
+jobs:
+  source-address:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: Wait for the tailnet
+        run: |
+          for _ in $(seq 1 30); do
+            ip -4 addr show tailscale0 2>/dev/null | grep -q 'inet ' && break
+            sleep 2
+          done
+          tailscale version
+          tailscale status || true
+
+      - name: Host networking state
+        run: |
+          ip -4 addr show
+          echo "--- ip rule ---"
+          ip rule
+          echo "--- table 52 ---"
+          ip -4 route show table 52 || echo "no table 52"
+          echo "--- nat POSTROUTING ---"
+          sudo iptables -t nat -S POSTROUTING
+          echo "--- docker bridge ---"
+          docker network inspect bridge --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
+
+      - name: Pick a target inside an accepted subnet route
+        id: target
+        run: |
+          target="${{ inputs.target }}"
+          if [ -z "$target" ]; then
+            target=$(python3 - <<'EOF'
+          import ipaddress, subprocess
+          cgnat = ipaddress.ip_network("100.64.0.0/10")
+          out = subprocess.run(["ip", "-4", "route", "show", "table", "52"],
+                               capture_output=True, text=True).stdout
+          for line in out.splitlines():
+              prefix = line.split()[0]
+              if "/" not in prefix:
+                  continue
+              net = ipaddress.ip_network(prefix, strict=False)
+              if net.subnet_of(cgnat):
+                  continue
+              print(next(net.hosts()))
+              break
+          EOF
+          )
+          fi
+          if [ -z "$target" ]; then
+            echo "No subnet routes in table 52, nothing to test against" >&2
+            exit 1
+          fi
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "target is $target"
+
+      - name: Source the kernel picks
+        run: |
+          target="${{ steps.target.outputs.target }}"
+          ip route get "$target"
+          ip route get "$target" from 172.17.0.2 iif docker0 || true
+
+      - name: Host-originated SYN
+        run: |
+          target="${{ steps.target.outputs.target }}"
+          port="${{ inputs.port }}"
+          command -v tcpdump >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq tcpdump; }
+          sudo timeout 15 tcpdump -ni tailscale0 -c 3 "host $target" > /tmp/host.txt 2>&1 &
+          sleep 2
+          timeout 3 bash -c ": > /dev/tcp/$target/$port" || true
+          wait || true
+          cat /tmp/host.txt
+
+      - name: Container-originated SYN
+        run: |
+          target="${{ steps.target.outputs.target }}"
+          port="${{ inputs.port }}"
+          docker pull -q alpine
+          sudo timeout 20 tcpdump -ni tailscale0 -c 3 "host $target" > /tmp/container.txt 2>&1 &
+          sleep 2
+          docker run --rm alpine sh -c "nc -w3 $target $port" || true
+          wait || true
+          cat /tmp/container.txt
+          sudo conntrack -L 2>/dev/null | grep "$target" || true
