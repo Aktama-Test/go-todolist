@@ -13,19 +13,9 @@ on:
 
 jobs:
   source-address:
-    strategy:
-      fail-fast: false
-      matrix:
-        harden: ["off", "audit"]
     # 32 CPUs keeps this off Metal (api/src/runners.ts getSandboxConnectionID)
     runs-on: depot-ubuntu-24.04-32
     steps:
-      - name: Harden runner
-        if: matrix.harden == 'audit'
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
-        with:
-          egress-policy: audit
-
       - name: Wait for the tailnet
         run: |
           for _ in $(seq 1 30); do
