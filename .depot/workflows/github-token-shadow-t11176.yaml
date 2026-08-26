@@ -1,0 +1,26 @@
+name: GITHUB_TOKEN secret shadowing repro (T-11176)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  compare:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - name: Fingerprint secrets
+        env:
+          SHADOWED: ${{ secrets.GITHUB_TOKEN }}
+          CONTROL: ${{ secrets.SHADOW_CONTROL_T11176 }}
+        run: |
+          # Never print values. sha256 and length only.
+          echo "expected sentinel sha256: e4d6498061785d2c4075fdf624faab5598cd93ae0080e1ff1cdc59737dab77f3"
+          echo "expected sentinel length: 33"
+          echo
+          echo "GITHUB_TOKEN  sha256: $(printf '%s' "$SHADOWED" | sha256sum | cut -d' ' -f1)"
+          echo "GITHUB_TOKEN  length: $(printf '%s' "$SHADOWED" | wc -c | tr -d ' ')"
+          echo "GITHUB_TOKEN  ghs_ prefix: $(case "$SHADOWED" in ghs_*) echo yes ;; *) echo no ;; esac)"
+          echo
+          echo "CONTROL       sha256: $(printf '%s' "$CONTROL" | sha256sum | cut -d' ' -f1)"
+          echo "CONTROL       length: $(printf '%s' "$CONTROL" | wc -c | tr -d ' ')"
+          echo
+          echo "github.actor: ${{ github.actor }}"
