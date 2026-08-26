@@ -36,17 +36,19 @@ jobs:
           echo "--- docker bridge ---"
           docker network inspect bridge --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
 
-      - name: Pick a target inside an accepted subnet route
+      - name: Pick a target
         id: target
         run: |
           target="${{ inputs.target }}"
           if [ -z "$target" ]; then
             target=$(python3 - <<'EOF'
-          import ipaddress, subprocess
+          import ipaddress, json, subprocess
           cgnat = ipaddress.ip_network("100.64.0.0/10")
-          out = subprocess.run(["ip", "-4", "route", "show", "table", "52"],
-                               capture_output=True, text=True).stdout
-          for line in out.splitlines():
+
+          # A subnet-routed destination is the closer match for the customer case.
+          routes = subprocess.run(["ip", "-4", "route", "show", "table", "52"],
+                                  capture_output=True, text=True).stdout
+          for line in routes.splitlines():
               prefix = line.split()[0]
               if "/" not in prefix:
                   continue
@@ -54,12 +56,22 @@ jobs:
               if net.subnet_of(cgnat):
                   continue
               print(next(net.hosts()))
-              break
+              raise SystemExit
+
+          # No subnet routers on this tailnet, so settle for a peer. The masquerade
+          # question is the same either way: which source lands on tailscale0.
+          status = json.loads(subprocess.run(["tailscale", "status", "--json"],
+                                             capture_output=True, text=True).stdout)
+          for peer in (status.get("Peer") or {}).values():
+              for addr in peer.get("TailscaleIPs") or []:
+                  if ":" not in addr:
+                      print(addr)
+                      raise SystemExit
           EOF
           )
           fi
           if [ -z "$target" ]; then
-            echo "No subnet routes in table 52, nothing to test against" >&2
+            echo "No subnet route and no peer to test against" >&2
             exit 1
           fi
           echo "target=$target" >> "$GITHUB_OUTPUT"
