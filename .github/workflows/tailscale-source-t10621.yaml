@@ -13,7 +13,8 @@ on:
 
 jobs:
   source-address:
-    runs-on: depot-ubuntu-24.04
+    # 32 CPUs keeps this off Metal (api/src/runners.ts getSandboxConnectionID)
+    runs-on: depot-ubuntu-24.04-32
     steps:
       - name: Wait for the tailnet
         run: |
