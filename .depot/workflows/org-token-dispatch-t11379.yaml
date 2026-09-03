@@ -1,0 +1,28 @@
+name: depot ci dispatch with org token secret repro (T-11379)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  chain:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: Which token is which
+        env:
+          FROM_SECRET: ${{ secrets.DEPOT_TOKEN }}
+        run: |
+          # Only the depot_<kind>_ prefix is printed, never token material.
+          echo "injected DEPOT_TOKEN kind: $(printf '%s' "$DEPOT_TOKEN" | cut -d_ -f1,2)_"
+          echo "secrets.DEPOT_TOKEN kind:  $(printf '%s' "$FROM_SECRET" | cut -d_ -f1,2)_"
+          echo "same value: $([ "$DEPOT_TOKEN" = "$FROM_SECRET" ] && echo yes || echo no)"
+
+      - name: Dispatch using the secret explicitly
+        env:
+          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+        run: |
+          set +e
+          depot ci dispatch \
+            --repo Aktama-Test/go-todolist \
+            --workflow cross-repo-clone-t11379.yaml \
+            --ref main
+          echo "dispatch exit: $?"
