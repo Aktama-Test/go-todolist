@@ -1,0 +1,42 @@
+name: Runner image apt sources repro (T-11432)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  apt-sources:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - depot-ubuntu-22.04
+          - depot-ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      # No checkout and no apt call before this, so whatever is here came with the image.
+      - name: Sources shipped in the image
+        run: |
+          echo "runner: ${{ matrix.runner }}"
+          cat /etc/os-release
+          echo "--- ls /etc/apt/sources.list.d ---"
+          ls -la /etc/apt/sources.list.d/
+          echo "--- contents ---"
+          for f in /etc/apt/sources.list.d/*; do
+            echo "### $f"
+            cat "$f"
+          done
+          echo "--- /etc/apt/sources.list ---"
+          cat /etc/apt/sources.list 2>/dev/null || echo "absent"
+          echo "--- /etc/apt/apt-mirrors.txt ---"
+          cat /etc/apt/apt-mirrors.txt 2>/dev/null || echo "absent"
+
+      - name: Does apt-get update reach out to Twingate
+        run: |
+          sudo apt-get update 2>&1 | tee /tmp/update.log || true
+          echo "--- twingate lines ---"
+          grep -i twingate /tmp/update.log || echo "no twingate fetch"
+
+      - name: Is the Twingate client baked in
+        run: |
+          command -v twingate && twingate version || echo "twingate binary absent"
+          dpkg -l | grep -i twingate || echo "no twingate package"
