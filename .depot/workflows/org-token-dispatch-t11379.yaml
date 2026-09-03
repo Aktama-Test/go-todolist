@@ -9,16 +9,16 @@ jobs:
     steps:
       - name: Which token is which
         env:
-          FROM_SECRET: ${{ secrets.DEPOT_TOKEN }}
+          FROM_SECRET: ${{ secrets.DEPOT_SECRET_TOKEN }}
         run: |
           # Only the depot_<kind>_ prefix is printed, never token material.
-          echo "injected DEPOT_TOKEN kind: $(printf '%s' "$DEPOT_TOKEN" | cut -d_ -f1,2)_"
-          echo "secrets.DEPOT_TOKEN kind:  $(printf '%s' "$FROM_SECRET" | cut -d_ -f1,2)_"
+          echo "injected DEPOT_TOKEN kind:      $(printf '%s' "$DEPOT_TOKEN" | cut -d_ -f1,2)_"
+          echo "DEPOT_SECRET_TOKEN kind:        $(printf '%s' "$FROM_SECRET" | cut -d_ -f1,2)_"
           echo "same value: $([ "$DEPOT_TOKEN" = "$FROM_SECRET" ] && echo yes || echo no)"
 
-      - name: Dispatch using the secret explicitly
+      - name: Dispatch using the org token
         env:
-          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+          DEPOT_TOKEN: ${{ secrets.DEPOT_SECRET_TOKEN }}
         run: |
           set +e
           depot ci dispatch \
