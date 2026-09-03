@@ -1,0 +1,32 @@
+name: Cross-repo clone with job GITHUB_TOKEN repro (T-11379)
+
+on:
+  workflow_dispatch:
+
+env:
+  TARGET_REPO: Aktama-Test/private-action-lib
+
+jobs:
+  clone:
+    runs-on: depot-ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: What does the job token cover
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Distinguishes "token narrowed to this repo" from "app not installed there".
+          curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/installation/repositories \
+            | jq '{total: .total_count, repos: [.repositories[] | {full_name, private}]}'
+
+      - name: Clone a different private repo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git clone --depth 1 \
+            "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" /tmp/src
+          echo "clone exit: $?"
+          ls -la /tmp/src
