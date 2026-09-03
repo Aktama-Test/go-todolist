@@ -1,0 +1,19 @@
+name: depot ci dispatch with injected DEPOT_TOKEN repro (T-11379)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  chain:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: Dispatch another workflow using the job's own DEPOT_TOKEN
+        run: |
+          # Does NOT override DEPOT_TOKEN; uses whatever Depot CI injected.
+          echo "token prefix: ${DEPOT_TOKEN%%_*}_"
+          set +e
+          depot ci dispatch \
+            --repo Aktama-Test/go-todolist \
+            --workflow cross-repo-clone-t11379.yaml \
+            --ref main
+          echo "dispatch exit: $?"
