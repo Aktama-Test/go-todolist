@@ -34,10 +34,11 @@ jobs:
             echo
           }
 
-          REPO_ID=$(gql "$(jq -nc --arg o "$OWNER" --arg n "$REPO" \
-            '{query:"query($o:String!,$n:String!){repository(owner:$o,name:$n){id}}",variables:{o:$o,n:$n}}')" \
-            | tail -1 | jq -r .data.repository.id)
-          echo "repo node: $REPO_ID"
+          gql "$(jq -nc --arg o "$OWNER" --arg n "$REPO" \
+            '{query:"query($o:String!,$n:String!){repository(owner:$o,name:$n){id}}",variables:{o:$o,n:$n}}')" >/dev/null
+          REPO_ID=$(jq -r '.data.repository.id // empty' /tmp/b)
+          echo "repo node: ${REPO_ID:-<none>}"
+          if [ -z "$REPO_ID" ]; then echo "repo lookup failed"; cat /tmp/b; exit 1; fi
 
           echo "::group::createCheckRun"
           gql "$(jq -nc --arg r "$REPO_ID" --arg s "$SHA" \
