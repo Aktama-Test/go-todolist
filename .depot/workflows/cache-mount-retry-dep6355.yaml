@@ -1,0 +1,167 @@
+name: cache-mount v1 disk token retry (DEP-6355)
+
+on:
+  workflow_dispatch: {}
+
+env:
+  MOUNT_PATH: /tmp/cache-mount
+  DISK_NAME: cache-mount-v1-check
+
+jobs:
+  version-check:
+    # v1 is a moving tag, so say out loud which build the runner actually pulled
+    # and how it compares to the pinned tag that carries the fix.
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - uses: depot/cache-mount@v1
+        with:
+          path: /tmp/cache-mount-v1
+          name: ${{ env.DISK_NAME }}
+          debug: true
+
+      - uses: depot/cache-mount@v1.2.2
+        with:
+          path: /tmp/cache-mount-v122
+          name: ${{ env.DISK_NAME }}
+          debug: true
+
+      - name: Which commit did each ref serve
+        run: |
+          # Depot CI materializes actions from its mirror into
+          # <baseDir>/actions/mirror_<key>_<sha>, so the resolved commit is the
+          # directory suffix. Only v1.2.2 and whatever v1 resolved to are here.
+          actions_dir="$(dirname "$(dirname "$GITHUB_WORKSPACE")")/actions"
+          found=0
+          stale=0
+          for dir in "$actions_dir"/*; do
+            dist="$dir/dist/index.js"
+            if [ ! -f "$dist" ]; then continue; fi
+            found=$((found + 1))
+            if grep -q 'identity is not ready' "$dist"; then
+              echo "${dir##*_}  retry build"
+            else
+              echo "${dir##*_}  pre-retry build"
+              stale=1
+            fi
+          done
+          if [ "$found" -lt 2 ]; then
+            echo "expected both refs on disk, found $found"
+            exit 1
+          fi
+          if [ "$stale" -ne 0 ]; then
+            echo "a ref resolved to a pre-retry commit, so v1 is not serving v1.2.2"
+            exit 1
+          fi
+
+  cold-mount:
+    # The 500 window closes once the SPIRE identity registers, so the mount has to
+    # be the first step in the job. Anything ahead of it warms the race away.
+    runs-on: depot-ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: depot/cache-mount@v1
+        with:
+          path: ${{ env.MOUNT_PATH }}
+          name: ${{ env.DISK_NAME }}
+          debug: true
+
+      - name: Mount is live and writable
+        run: |
+          findmnt -T "$MOUNT_PATH"
+          mkdir -p "$MOUNT_PATH/runs/${{ github.run_id }}"
+          date -Is > "$MOUNT_PATH/runs/${{ github.run_id }}/cold-${{ matrix.shard }}"
+          cat "$MOUNT_PATH/runs/${{ github.run_id }}/cold-${{ matrix.shard }}"
+
+  forced-retry:
+    # The cold jobs only hit the race by luck. Preloading a shim into the action's
+    # own node process serves the 500s on every execution, so this job fails
+    # outright against a pre-v1.2.2 build. The metadata address is already bound
+    # inside the sandbox, so intercepting on the network is not an option.
+    runs-on: depot-ubuntu-24.04
+    env:
+      SHIM_LOG: /tmp/dt-shim.log
+      SHIM_FAIL_FIRST: 3
+    steps:
+      - name: Arm the disk token shim
+        run: |
+          cat > /tmp/dt-shim.js <<'JS'
+          const fs = require('node:fs')
+          const http = require('node:http')
+          const {EventEmitter} = require('node:events')
+          const {Readable} = require('node:stream')
+
+          const LOG = process.env.SHIM_LOG
+          const FAIL_FIRST = Number(process.env.SHIM_FAIL_FIRST)
+          let failed = 0
+
+          const realRequest = http.request
+
+          http.request = function (options, callback) {
+            const opts = typeof options === 'string' ? new URL(options) : options
+            const path = String((opts && (opts.path ?? opts.pathname)) || '')
+            const method = String((opts && opts.method) || 'GET').toUpperCase()
+            const target = method === 'POST' && path.startsWith('/archil/disk-token')
+
+            if (!target || failed >= FAIL_FIRST) return realRequest.apply(this, arguments)
+
+            failed++
+            fs.appendFileSync(LOG, `injected 500 ${failed}/${FAIL_FIRST} ${method} ${path}\n`)
+
+            const body = Buffer.from('{"error":"identity not registered yet"}')
+            const res = Readable.from([body])
+            res.statusCode = 500
+            res.statusMessage = 'Internal Server Error'
+            res.headers = {'content-type': 'application/json', 'content-length': String(body.length)}
+
+            const req = new EventEmitter()
+            req.write = () => true
+            req.setTimeout = () => req
+            req.destroy = () => {}
+            req.end = () => setImmediate(() => callback(res))
+            return req
+          }
+          JS
+          node --check /tmp/dt-shim.js
+
+      - uses: depot/cache-mount@v1
+        env:
+          NODE_OPTIONS: --require /tmp/dt-shim.js
+        with:
+          path: ${{ env.MOUNT_PATH }}
+          name: ${{ env.DISK_NAME }}
+          debug: true
+
+      - name: The retries actually happened
+        run: |
+          test -s "$SHIM_LOG" || { echo "shim never ran; NODE_OPTIONS was not honored"; exit 1; }
+          cat "$SHIM_LOG"
+          test "$(wc -l < "$SHIM_LOG")" -eq "$SHIM_FAIL_FIRST"
+
+      - name: Mount survived the retries
+        run: |
+          findmnt -T "$MOUNT_PATH"
+          mkdir -p "$MOUNT_PATH/runs/${{ github.run_id }}"
+          date -Is > "$MOUNT_PATH/runs/${{ github.run_id }}/forced-retry"
+
+  read-back:
+    needs: cold-mount
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - uses: depot/cache-mount@v1
+        with:
+          path: ${{ env.MOUNT_PATH }}
+          name: ${{ env.DISK_NAME }}
+          debug: true
+
+      - name: Every cold writer landed on the shared disk
+        run: |
+          ls -la "$MOUNT_PATH/runs/${{ github.run_id }}"
+          test "$(ls "$MOUNT_PATH/runs/${{ github.run_id }}"/cold-* | wc -l)" -eq 4
+
+      - name: Content survives from earlier runs
+        run: |
+          ls -la "$MOUNT_PATH/runs"
+          echo "runs on disk: $(ls "$MOUNT_PATH/runs" | wc -l)"
