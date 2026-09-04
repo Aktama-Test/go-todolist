@@ -1,0 +1,66 @@
+name: GraphQL check-run write repro (T-11441)
+
+# GITHUB_TOKEN is an installation token for the GitHub Actions app, which is what
+# `CreateCheckRun can only be accessed by a GitHub App` is asking for. Proves the
+# GraphQL check mutations work for an app caller and measures their point cost.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create and update a check run over GraphQL
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          gql() {
+            curl -sS -D /tmp/h -o /tmp/b \
+              -H "Authorization: bearer $GH_TOKEN" \
+              -H "Content-Type: application/json" \
+              -X POST https://api.github.com/graphql -d "$1"
+            grep -iE '^x-ratelimit-(used|remaining|limit|resource)' /tmp/h || true
+            cat /tmp/b
+            echo
+          }
+
+          REPO_ID=$(gql "$(jq -nc --arg o "$OWNER" --arg n "$REPO" \
+            '{query:"query($o:String!,$n:String!){repository(owner:$o,name:$n){id}}",variables:{o:$o,n:$n}}')" \
+            | tail -1 | jq -r .data.repository.id)
+          echo "repo node: $REPO_ID"
+
+          echo "::group::createCheckRun"
+          gql "$(jq -nc --arg r "$REPO_ID" --arg s "$SHA" \
+            '{query:"mutation($input: CreateCheckRunInput!){createCheckRun(input:$input){checkRun{id databaseId name status}}}",
+              variables:{input:{repositoryId:$r,headSha:$s,name:"depot-graphql-probe",
+              externalId:"probe:graphql-check-write",detailsUrl:"https://depot.dev",status:"QUEUED"}}}')"
+          echo "::endgroup::"
+
+          CR_ID=$(jq -r '.data.createCheckRun.checkRun.id // empty' /tmp/b)
+          CR_DB=$(jq -r '.data.createCheckRun.checkRun.databaseId // empty' /tmp/b)
+          echo "check run node id: ${CR_ID:-<none>}  databaseId: ${CR_DB:-<none>}"
+          if [ -z "$CR_ID" ]; then echo "create failed"; exit 1; fi
+
+          echo "::group::updateCheckRun"
+          gql "$(jq -nc --arg r "$REPO_ID" --arg c "$CR_ID" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{query:"mutation($input: UpdateCheckRunInput!){updateCheckRun(input:$input){checkRun{id databaseId status conclusion}}}",
+              variables:{input:{repositoryId:$r,checkRunId:$c,status:"COMPLETED",conclusion:"NEUTRAL",completedAt:$t}}}')"
+          echo "::endgroup::"
+
+          # Does our REST recovery path (checks.listForRef) see a GraphQL-written check?
+          echo "::group::REST visibility"
+          curl -sS -H "Authorization: bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$OWNER/$REPO/commits/$SHA/check-runs?per_page=100" \
+            | jq '[.check_runs[] | select(.external_id=="probe:graphql-check-write")
+                   | {id, node_id, name, status, conclusion, external_id, app: .app.slug}]'
+          echo "::endgroup::"
