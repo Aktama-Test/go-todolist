@@ -128,6 +128,7 @@ jobs:
 
           STALL_ZONE = b"stall.invalid"
           FAST_ZONE = b"fast.invalid"
+          LATE_NX_ZONE = b"latenx.invalid"
           UPSTREAM = ("8.8.8.8", 53)
 
           def qname(pkt):
@@ -149,6 +150,9 @@ jobs:
               if name.endswith(STALL_ZONE):
                   time.sleep(10)
                   sock.sendto(rcode_reply(data, 2), addr)
+              elif name.endswith(LATE_NX_ZONE):
+                  time.sleep(10)
+                  sock.sendto(rcode_reply(data, 3), addr)
               elif name.endswith(FAST_ZONE):
                   sock.sendto(rcode_reply(data, 2), addr)
               else:
@@ -180,3 +184,7 @@ jobs:
           echo "=== immediate SERVFAIL ==="
           time docker run --rm --dns "$host_ip" node:22-bookworm-slim \
             node -e 'require("dns").lookup("secrets.fast.invalid",(e,a)=>console.log(e?e.code:a))'
+
+          echo "=== stalls 10s then NXDOMAIN: the customer's exact signature? ==="
+          time docker run --rm --dns "$host_ip" node:22-bookworm-slim \
+            node -e 'require("dns").lookup("secrets.latenx.invalid",(e,a)=>console.log(e?e.code:a))'
