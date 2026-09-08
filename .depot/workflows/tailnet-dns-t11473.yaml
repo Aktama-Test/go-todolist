@@ -1,0 +1,95 @@
+name: Tailnet DNS failure signature repro (T-11473)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tailnet_host:
+        description: A MagicDNS or split-DNS name only the tailnet can resolve
+        required: false
+        default: ""
+
+jobs:
+  # The direct answer to "was the tailnet up yet". vm3's init writes
+  # 8.8.8.8/9.9.9.9 at boot and tailscaled overwrites it once the netmap lands,
+  # so sampling has to start in the very first step to catch the flip. Reports
+  # the offset at which resolv.conf changes and the offset at which a real
+  # tailnet name first resolves. The customer's failing window was +2.4s to
+  # +12.4s from the join.
+  resolver-flip:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - name: Time the resolver flip and first tailnet resolution
+        env:
+          HOST: ${{ inputs.tailnet_host }}
+        run: |
+          start=$(date +%s%3N)
+          prev=""
+          resolved=""
+          for _ in $(seq 1 300); do
+            cur=$(md5sum /etc/resolv.conf | cut -d' ' -f1)
+            if [ "$cur" != "$prev" ]; then
+              echo "=== resolv.conf changed at +$(( $(date +%s%3N) - start ))ms ==="
+              cat /etc/resolv.conf
+              prev="$cur"
+            fi
+            if [ -n "$HOST" ] && [ -z "$resolved" ] && getent hosts "$HOST" >/dev/null 2>&1; then
+              resolved="+$(( $(date +%s%3N) - start ))ms"
+              echo "=== $HOST first resolved at $resolved ==="
+              getent hosts "$HOST"
+            fi
+            sleep 0.1
+          done
+          echo "=== ${HOST:-no host given} first resolved: ${resolved:-never} ==="
+          tailscale status 2>&1 | head -5 || echo "no tailscale"
+          tailscale dns status 2>&1 || echo "no tailscale dns status"
+
+  # A public NXDOMAIN answers in milliseconds. If vault-action's own retries
+  # stretch that into a ~10s wall, the customer's fixed 10.02s tells us nothing
+  # about which resolver was in effect and the race is back on the table.
+  public-nxdomain:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - name: Resolver in use
+        run: cat /etc/resolv.conf
+
+      - name: getaddrinfo against a public NXDOMAIN
+        run: |
+          time getent hosts secrets.example.com || echo "getent: no answer"
+          time node -e 'require("dns").lookup("secrets.example.com",(e,a)=>console.log(e?e.code:a))'
+
+      - name: vault-action against the same name
+        continue-on-error: true
+        uses: hashicorp/vault-action@v4
+        with:
+          url: https://secrets.example.com
+          method: approle
+          roleId: not-a-real-role-id
+          secretId: not-a-real-secret-id
+          secrets: |
+            infra/data/internal FOO | FOO
+
+      - name: The step duration above is the number that matters
+        run: echo "compare the vault-action step duration against the customer's 10.02s"
+
+  # What MagicDNS forwarding to an unreachable split-DNS server looks like from
+  # inside the guest: the resolver accepts the query and never answers. Both the
+  # elapsed time and the error code are the point, because a pure timeout should
+  # surface as EAI_AGAIN and the customer got ENOTFOUND. Restore in the same step
+  # so the broken resolver cannot outlive it.
+  dead-resolver:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - name: Blackholed resolver, single nameserver
+        run: |
+          sudo cp /etc/resolv.conf /tmp/resolv.conf.bak
+          trap 'sudo cp /tmp/resolv.conf.bak /etc/resolv.conf' EXIT
+          printf 'nameserver 198.51.100.53\n' | sudo tee /etc/resolv.conf
+          time node -e 'require("dns").lookup("secrets.example.com",(e,a)=>console.log(e?e.code:a))' || true
+          time getent hosts secrets.example.com || echo "getent: no answer"
+
+      - name: Blackholed resolver, v4 + v6 as tailscale writes it
+        run: |
+          sudo cp /etc/resolv.conf /tmp/resolv.conf.bak
+          trap 'sudo cp /tmp/resolv.conf.bak /etc/resolv.conf' EXIT
+          printf 'nameserver 198.51.100.53\nnameserver 2001:db8::53\nsearch example.com\n' | sudo tee /etc/resolv.conf
+          time node -e 'require("dns").lookup("secrets.example.com",(e,a)=>console.log(e?e.code:a))' || true
