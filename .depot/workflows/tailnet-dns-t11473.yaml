@@ -9,12 +9,48 @@ on:
         default: ""
 
 jobs:
+  # Which tailnet does this org's Depot CI actually join, and is the target host
+  # a peer on it? Everything else is meaningless if the answer is no.
+  tailnet-identity:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - name: Wait for the join, then report the tailnet
+        env:
+          HOST: ${{ inputs.tailnet_host }}
+        run: |
+          tailscale wait --timeout=60s || echo "tailscale wait failed"
+          echo "=== status ==="
+          tailscale status 2>&1 || echo "no tailscale"
+          echo "=== dns status ==="
+          tailscale dns status 2>&1 || echo "no tailscale dns status"
+          echo "=== resolv.conf ==="
+          cat /etc/resolv.conf
+          echo "=== is ${HOST:-<none>} a peer? ==="
+          [ -n "$HOST" ] && (tailscale status 2>/dev/null | grep -i "$HOST" || echo "NOT a peer on this tailnet")
+
+  # Can we actually reach it over MagicDNS, not just resolve it.
+  magicdns-reach:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - name: Resolve and connect
+        env:
+          HOST: ${{ inputs.tailnet_host }}
+        run: |
+          [ -n "$HOST" ] || { echo "no tailnet_host given, skipping"; exit 0; }
+          tailscale wait --timeout=60s || true
+          echo "=== getent (bare name, relies on the MagicDNS search domain) ==="
+          time getent hosts "$HOST" || echo "getent: no answer"
+          echo "=== tailscale ping (bypasses DNS, proves the ACL and path) ==="
+          tailscale ping --timeout 5s -c 2 "$HOST" 2>&1 | head -4 || true
+          echo "=== ip route to the resolved address ==="
+          addr=$(getent hosts "$HOST" | awk 'NR==1{print $1}')
+          echo "resolved: ${addr:-none}"
+          [ -n "$addr" ] && ip route get "$addr"
+
   # The direct answer to "was the tailnet up yet". vm3's init writes
   # 8.8.8.8/9.9.9.9 at boot and tailscaled overwrites it once the netmap lands,
-  # so sampling has to start in the very first step to catch the flip. Reports
-  # the offset at which resolv.conf changes and the offset at which a real
-  # tailnet name first resolves. The customer's failing window was +2.4s to
-  # +12.4s from the join.
+  # so sampling has to start in the very first step to catch the flip. The
+  # customer's failing window was +2.4s to +12.4s from the join.
   resolver-flip:
     runs-on: depot-ubuntu-latest
     steps:
@@ -25,27 +61,26 @@ jobs:
           start=$(date +%s%3N)
           prev=""
           resolved=""
+          flipped=""
           for _ in $(seq 1 300); do
             cur=$(md5sum /etc/resolv.conf | cut -d' ' -f1)
             if [ "$cur" != "$prev" ]; then
               echo "=== resolv.conf changed at +$(( $(date +%s%3N) - start ))ms ==="
               cat /etc/resolv.conf
+              [ -n "$prev" ] && flipped="yes"
               prev="$cur"
             fi
             if [ -n "$HOST" ] && [ -z "$resolved" ] && getent hosts "$HOST" >/dev/null 2>&1; then
               resolved="+$(( $(date +%s%3N) - start ))ms"
               echo "=== $HOST first resolved at $resolved ==="
-              getent hosts "$HOST"
             fi
+            [ -n "$resolved" ] && [ -n "$flipped" ] && break
             sleep 0.1
           done
           echo "=== ${HOST:-no host given} first resolved: ${resolved:-never} ==="
-          tailscale status 2>&1 | head -5 || echo "no tailscale"
-          tailscale dns status 2>&1 || echo "no tailscale dns status"
 
-  # A public NXDOMAIN answers in milliseconds. If vault-action's own retries
-  # stretch that into a ~10s wall, the customer's fixed 10.02s tells us nothing
-  # about which resolver was in effect and the race is back on the table.
+  # A public NXDOMAIN answers in milliseconds. Confirms vault-action does not
+  # retry a DNS failure into the customer's flat 10.02s wall.
   public-nxdomain:
     runs-on: depot-ubuntu-latest
     steps:
@@ -68,28 +103,80 @@ jobs:
           secrets: |
             infra/data/internal FOO | FOO
 
-      - name: The step duration above is the number that matters
-        run: echo "compare the vault-action step duration against the customer's 10.02s"
-
-  # What MagicDNS forwarding to an unreachable split-DNS server looks like from
-  # inside the guest: the resolver accepts the query and never answers. Both the
-  # elapsed time and the error code are the point, because a pure timeout should
-  # surface as EAI_AGAIN and the customer got ENOTFOUND. Restore in the same step
-  # so the broken resolver cannot outlive it.
+  # What a non-answering resolver looks like to the same getaddrinfo call
+  # vault-action makes. Runs in a container so the sandbox resolver stays intact
+  # and the worker keeps its own lookups. bookworm, not alpine, to keep glibc.
   dead-resolver:
     runs-on: depot-ubuntu-latest
     steps:
-      - name: Blackholed resolver, single nameserver
+      - name: Silent resolver
         run: |
-          sudo cp /etc/resolv.conf /tmp/resolv.conf.bak
-          trap 'sudo cp /tmp/resolv.conf.bak /etc/resolv.conf' EXIT
-          printf 'nameserver 198.51.100.53\n' | sudo tee /etc/resolv.conf
-          time node -e 'require("dns").lookup("secrets.example.com",(e,a)=>console.log(e?e.code:a))' || true
-          time getent hosts secrets.example.com || echo "getent: no answer"
+          time docker run --rm --dns 198.51.100.53 node:22-bookworm-slim \
+            node -e 'require("dns").lookup("secrets.example.com",(e,a)=>console.log(e?e.code:a))'
 
-      - name: Blackholed resolver, v4 + v6 as tailscale writes it
+  # The customer got ENOTFOUND after 10.02s. A silent resolver gives EAI_AGAIN,
+  # so the question is whether a resolver that answers late, the way tailscaled
+  # does when it gives up on a split-DNS upstream, renders as ENOTFOUND. Forwards
+  # everything except the test domain so the sandbox stays usable.
+  late-servfail:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - name: Stand up a resolver that stalls then SERVFAILs one domain
         run: |
-          sudo cp /etc/resolv.conf /tmp/resolv.conf.bak
-          trap 'sudo cp /tmp/resolv.conf.bak /etc/resolv.conf' EXIT
-          printf 'nameserver 198.51.100.53\nnameserver 2001:db8::53\nsearch example.com\n' | sudo tee /etc/resolv.conf
-          time node -e 'require("dns").lookup("secrets.example.com",(e,a)=>console.log(e?e.code:a))' || true
+          cat > /tmp/fake_resolver.py <<'PY'
+          import socket, struct, sys, threading, time
+
+          STALL_ZONE = b"stall.invalid"
+          FAST_ZONE = b"fast.invalid"
+          UPSTREAM = ("8.8.8.8", 53)
+
+          def qname(pkt):
+              i, parts = 12, []
+              while i < len(pkt) and pkt[i]:
+                  n = pkt[i]
+                  parts.append(pkt[i + 1 : i + 1 + n])
+                  i += 1 + n
+              return b".".join(parts).lower()
+
+          def rcode_reply(pkt, rcode):
+              tid = pkt[:2]
+              flags = struct.pack("!H", 0x8180 | rcode)
+              rest = pkt[4:]
+              return tid + flags + struct.pack("!HHHH", 1, 0, 0, 0) + rest[8:]
+
+          def serve(sock, data, addr):
+              name = qname(data)
+              if name.endswith(STALL_ZONE):
+                  time.sleep(10)
+                  sock.sendto(rcode_reply(data, 2), addr)
+              elif name.endswith(FAST_ZONE):
+                  sock.sendto(rcode_reply(data, 2), addr)
+              else:
+                  up = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                  up.settimeout(5)
+                  up.sendto(data, UPSTREAM)
+                  try:
+                      sock.sendto(up.recv(4096), addr)
+                  except socket.timeout:
+                      pass
+
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.bind(("0.0.0.0", 53))
+          sys.stderr.write("fake resolver up\n")
+          sys.stderr.flush()
+          while True:
+              data, addr = s.recvfrom(4096)
+              threading.Thread(target=serve, args=(s, data, addr), daemon=True).start()
+          PY
+          sudo python3 /tmp/fake_resolver.py &
+          sleep 2
+          host_ip=$(ip -4 addr show docker0 | awk '/inet /{print $2}' | cut -d/ -f1)
+          echo "fake resolver at ${host_ip}"
+
+          echo "=== upstream stalls 10s then SERVFAIL (tailscaled giving up) ==="
+          time docker run --rm --dns "$host_ip" node:22-bookworm-slim \
+            node -e 'require("dns").lookup("secrets.stall.invalid",(e,a)=>console.log(e?e.code:a))'
+
+          echo "=== immediate SERVFAIL ==="
+          time docker run --rm --dns "$host_ip" node:22-bookworm-slim \
+            node -e 'require("dns").lookup("secrets.fast.invalid",(e,a)=>console.log(e?e.code:a))'
