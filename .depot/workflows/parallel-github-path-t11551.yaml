@@ -1,0 +1,92 @@
+name: Parallel $GITHUB_PATH isolation repro (T-11551)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  parallel-path:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - name: Record the pre-block PATH
+        run: |
+          mkdir -p "$RUNNER_TEMP/rendezvous"
+          echo "$PATH" > "$RUNNER_TEMP/path-before"
+          echo "PATH-BEFORE=$PATH"
+
+      # Each branch writes one bin dir to its own $GITHUB_PATH, then blocks on a
+      # file the sibling creates. The rendezvous forces both writes to land before
+      # either branch checks, so a passing isolation check cannot be a timing fluke.
+      - fail-fast: false
+        parallel:
+          - sequential:
+              - name: A writes to $GITHUB_PATH
+                run: |
+                  mkdir -p "$RUNNER_TEMP/bin-a"
+                  printf '#!/bin/sh\necho tool-a-ok\n' > "$RUNNER_TEMP/bin-a/tool-a"
+                  chmod +x "$RUNNER_TEMP/bin-a/tool-a"
+                  echo "A-GITHUB-PATH-FILE=$GITHUB_PATH"
+                  echo "A-GITHUB-PATH-INODE=$(stat -c %i "$GITHUB_PATH")"
+                  echo "$RUNNER_TEMP/bin-a" >> "$GITHUB_PATH"
+                  touch "$RUNNER_TEMP/rendezvous/a-wrote"
+
+              - name: A checks isolation once B has written
+                run: |
+                  for _ in $(seq 1 60); do
+                      [ -f "$RUNNER_TEMP/rendezvous/b-wrote" ] && break
+                      sleep 1
+                  done
+                  if [ -f "$RUNNER_TEMP/rendezvous/b-wrote" ]; then
+                      echo "A-SEES-B-FILE=yes"
+                  else
+                      echo "A-SEES-B-FILE=no (timed out; temp dir may not be shared)"
+                  fi
+                  echo "A-PATH=$PATH"
+                  command -v tool-a >/dev/null && echo "A-SEES-OWN-TOOL=yes" || echo "A-SEES-OWN-TOOL=no"
+                  command -v tool-b >/dev/null && echo "A-SEES-SIBLING-TOOL=yes" || echo "A-SEES-SIBLING-TOOL=no"
+
+          - sequential:
+              - name: B writes to $GITHUB_PATH
+                run: |
+                  mkdir -p "$RUNNER_TEMP/bin-b"
+                  printf '#!/bin/sh\necho tool-b-ok\n' > "$RUNNER_TEMP/bin-b/tool-b"
+                  chmod +x "$RUNNER_TEMP/bin-b/tool-b"
+                  echo "B-GITHUB-PATH-FILE=$GITHUB_PATH"
+                  echo "B-GITHUB-PATH-INODE=$(stat -c %i "$GITHUB_PATH")"
+                  echo "$RUNNER_TEMP/bin-b" >> "$GITHUB_PATH"
+                  touch "$RUNNER_TEMP/rendezvous/b-wrote"
+
+              - name: B checks isolation once A has written
+                run: |
+                  for _ in $(seq 1 60); do
+                      [ -f "$RUNNER_TEMP/rendezvous/a-wrote" ] && break
+                      sleep 1
+                  done
+                  if [ -f "$RUNNER_TEMP/rendezvous/a-wrote" ]; then
+                      echo "B-SEES-A-FILE=yes"
+                  else
+                      echo "B-SEES-A-FILE=no (timed out; temp dir may not be shared)"
+                  fi
+                  echo "B-PATH=$PATH"
+                  command -v tool-b >/dev/null && echo "B-SEES-OWN-TOOL=yes" || echo "B-SEES-OWN-TOOL=no"
+                  command -v tool-a >/dev/null && echo "B-SEES-SIBLING-TOOL=yes" || echo "B-SEES-SIBLING-TOOL=no"
+
+      - name: Both branches survive the merge
+        run: |
+          echo "PATH-AFTER=$PATH"
+          rc=0
+          for tool in tool-a tool-b; do
+              if resolved=$(command -v "$tool"); then
+                  echo "AFTER-$tool=$resolved -> $("$tool")"
+              else
+                  echo "AFTER-$tool=MISSING"
+                  rc=1
+              fi
+          done
+          # The pre-block PATH must still be intact underneath the additions.
+          while IFS= read -r entry; do
+              case ":$PATH:" in
+                  *":$entry:"*) ;;
+                  *) echo "DROPPED-PRE-BLOCK-ENTRY=$entry"; rc=1 ;;
+              esac
+          done < <(tr ':' '\n' < "$RUNNER_TEMP/path-before" | grep -v '^$')
+          exit $rc
