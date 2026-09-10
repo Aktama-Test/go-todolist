@@ -1,0 +1,31 @@
+name: Path churn
+description: Alternates $GITHUB_PATH writes and plain steps to interleave list mutation with step launches.
+
+inputs:
+  tag:
+    description: Identifier for this invocation
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        for i in $(seq 1 30); do echo "$RUNNER_TEMP/${{ inputs.tag }}-a-$i" >> "$GITHUB_PATH"; done
+    - shell: bash
+      run: echo "${{ inputs.tag }} launch 1"
+    - shell: bash
+      run: |
+        for i in $(seq 1 30); do echo "$RUNNER_TEMP/${{ inputs.tag }}-b-$i" >> "$GITHUB_PATH"; done
+    - shell: bash
+      run: echo "${{ inputs.tag }} launch 2"
+    - shell: bash
+      run: |
+        for i in $(seq 1 30); do echo "$RUNNER_TEMP/${{ inputs.tag }}-c-$i" >> "$GITHUB_PATH"; done
+    - shell: bash
+      run: echo "${{ inputs.tag }} launch 3"
+    - shell: bash
+      run: |
+        for i in $(seq 1 30); do echo "$RUNNER_TEMP/${{ inputs.tag }}-d-$i" >> "$GITHUB_PATH"; done
+    - shell: bash
+      run: echo "${{ inputs.tag }} launch 4"

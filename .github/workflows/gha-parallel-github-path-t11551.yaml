@@ -7,64 +7,32 @@ jobs:
   race:
     runs-on: depot-ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
+
       - name: Record the pre-block PATH
         run: echo "PATH-BEFORE=$PATH"
 
-      # One branch launches many short steps, which re-reads the shared
-      # PrependPath list on every launch. The other writes to $GITHUB_PATH the
-      # whole time. If the list isn't guarded, one of the launches enumerates it
-      # mid-mutation.
+      # Three composite actions running concurrently, each alternating
+      # $GITHUB_PATH writes with plain steps. Mirrors the pnpm-install /
+      # setup-python-cached / rust-toolchain shape that failed for PostHog.
       - parallel:
-          - sequential:
-              - name: launch 1
-                run: echo tick
-              - name: launch 2
-                run: echo tick
-              - name: launch 3
-                run: echo tick
-              - name: launch 4
-                run: echo tick
-              - name: launch 5
-                run: echo tick
-              - name: launch 6
-                run: echo tick
-              - name: launch 7
-                run: echo tick
-              - name: launch 8
-                run: echo tick
-              - name: launch 9
-                run: echo tick
-              - name: launch 10
-                run: echo tick
-
-          - sequential:
-              - name: write paths 1
-                run: |
-                  for i in $(seq 1 40); do
-                      mkdir -p "$RUNNER_TEMP/w1-$i"
-                      echo "$RUNNER_TEMP/w1-$i" >> "$GITHUB_PATH"
-                  done
-              - name: write paths 2
-                run: |
-                  for i in $(seq 1 40); do
-                      mkdir -p "$RUNNER_TEMP/w2-$i"
-                      echo "$RUNNER_TEMP/w2-$i" >> "$GITHUB_PATH"
-                  done
-              - name: write paths 3
-                run: |
-                  for i in $(seq 1 40); do
-                      mkdir -p "$RUNNER_TEMP/w3-$i"
-                      echo "$RUNNER_TEMP/w3-$i" >> "$GITHUB_PATH"
-                  done
-              - name: write paths 4
-                run: |
-                  for i in $(seq 1 40); do
-                      mkdir -p "$RUNNER_TEMP/w4-$i"
-                      echo "$RUNNER_TEMP/w4-$i" >> "$GITHUB_PATH"
-                  done
+          - name: Churn A
+            uses: ./.github/actions/path-churn
+            with:
+              tag: ca
+          - name: Churn B
+            uses: ./.github/actions/path-churn
+            with:
+              tag: cb
+          - name: Churn C
+            uses: ./.github/actions/path-churn
+            with:
+              tag: cc
 
       - name: After the block
         if: always()
         run: |
-          echo "PATH-AFTER=$PATH"
-          echo "W-ENTRIES=$(tr ':' '\n' <<< "$PATH" | grep -c '/w[0-9]-' || true)"
+          echo "PATH-AFTER-COUNT=$(tr ':' '\n' <<< "$PATH" | grep -c '/c[abc]-' || true)"
+          for t in ca cb cc; do
+            echo "$t=$(tr ':' '\n' <<< "$PATH" | grep -c "/$t-" || true)"
+          done
