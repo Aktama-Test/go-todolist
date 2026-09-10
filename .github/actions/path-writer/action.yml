@@ -1,0 +1,65 @@
+name: Path writer
+description: Writes two bin dirs to $GITHUB_PATH across two inner steps, then checks isolation from its sibling invocation.
+
+inputs:
+  tag:
+    description: Identifier for this invocation (a or b)
+    required: true
+  sibling:
+    description: Identifier of the concurrent sibling invocation
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Write first bin dir
+      shell: bash
+      run: |
+        tag='${{ inputs.tag }}'
+        dir="$RUNNER_TEMP/comp-bin-$tag-1"
+        mkdir -p "$dir" "$RUNNER_TEMP/rendezvous"
+        printf '#!/bin/sh\necho comp-tool-%s-1-ok\n' "$tag" > "$dir/comp-tool-$tag-1"
+        chmod +x "$dir/comp-tool-$tag-1"
+        echo "COMP-$tag-GITHUB-PATH-FILE=$GITHUB_PATH"
+        echo "COMP-$tag-GITHUB-PATH-INODE=$(stat -c %i "$GITHUB_PATH")"
+        echo "$dir" >> "$GITHUB_PATH"
+        echo "COMP_HOME_$(echo "$tag" | tr 'a-z' 'A-Z')=$dir" >> "$GITHUB_ENV"
+        touch "$RUNNER_TEMP/rendezvous/comp-$tag-wrote"
+
+    - name: Write second bin dir
+      shell: bash
+      run: |
+        tag='${{ inputs.tag }}'
+        dir="$RUNNER_TEMP/comp-bin-$tag-2"
+        mkdir -p "$dir"
+        printf '#!/bin/sh\necho comp-tool-%s-2-ok\n' "$tag" > "$dir/comp-tool-$tag-2"
+        chmod +x "$dir/comp-tool-$tag-2"
+        echo "$dir" >> "$GITHUB_PATH"
+        # An inner step must already see the previous inner step's addition.
+        command -v "comp-tool-$tag-1" >/dev/null \
+          && echo "COMP-$tag-INNER-SEES-PREVIOUS-STEP=yes" \
+          || echo "COMP-$tag-INNER-SEES-PREVIOUS-STEP=no"
+
+    - name: Wait for the sibling invocation, then check isolation
+      shell: bash
+      run: |
+        tag='${{ inputs.tag }}'
+        sibling='${{ inputs.sibling }}'
+        for _ in $(seq 1 60); do
+            [ -f "$RUNNER_TEMP/rendezvous/comp-$sibling-wrote" ] && break
+            sleep 1
+        done
+        if [ -f "$RUNNER_TEMP/rendezvous/comp-$sibling-wrote" ]; then
+            echo "COMP-$tag-SEES-SIBLING-FILE=yes"
+        else
+            echo "COMP-$tag-SEES-SIBLING-FILE=no (timed out)"
+        fi
+        echo "COMP-$tag-PATH=$PATH"
+        for n in 1 2; do
+            command -v "comp-tool-$tag-$n" >/dev/null \
+              && echo "COMP-$tag-SEES-OWN-TOOL-$n=yes" \
+              || echo "COMP-$tag-SEES-OWN-TOOL-$n=no"
+            command -v "comp-tool-$sibling-$n" >/dev/null \
+              && echo "COMP-$tag-SEES-SIBLING-TOOL-$n=yes" \
+              || echo "COMP-$tag-SEES-SIBLING-TOOL-$n=no"
+        done

@@ -90,3 +90,55 @@ jobs:
               esac
           done < <(tr ':' '\n' < "$RUNNER_TEMP/path-before" | grep -v '^$')
           exit $rc
+
+  parallel-path-composite:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Record the pre-block PATH
+        run: |
+          echo "$PATH" > "$RUNNER_TEMP/path-before"
+          echo "PATH-BEFORE=$PATH"
+
+      # Two concurrent invocations of the same local composite action. Each writes
+      # two bin dirs to $GITHUB_PATH from separate inner steps, which exercises the
+      # composite write-back path rather than the plain run-step one.
+      - fail-fast: false
+        parallel:
+          - name: Composite A
+            uses: ./.github/actions/path-writer
+            with:
+              tag: a
+              sibling: b
+          - name: Composite B
+            uses: ./.github/actions/path-writer
+            with:
+              tag: b
+              sibling: a
+
+      - name: Both composites survive the merge
+        run: |
+          echo "PATH-AFTER=$PATH"
+          echo "COMP_HOME_A=$COMP_HOME_A"
+          echo "COMP_HOME_B=$COMP_HOME_B"
+          rc=0
+          for tool in comp-tool-a-1 comp-tool-a-2 comp-tool-b-1 comp-tool-b-2; do
+              if resolved=$(command -v "$tool"); then
+                  echo "AFTER-$tool=$resolved -> $("$tool")"
+              else
+                  echo "AFTER-$tool=MISSING"
+                  rc=1
+              fi
+          done
+          # Both composites' $GITHUB_ENV writes must survive the merge too.
+          for var in COMP_HOME_A COMP_HOME_B; do
+              [ -n "${!var}" ] || { echo "MISSING-ENV=$var"; rc=1; }
+          done
+          while IFS= read -r entry; do
+              case ":$PATH:" in
+                  *":$entry:"*) ;;
+                  *) echo "DROPPED-PRE-BLOCK-ENTRY=$entry"; rc=1 ;;
+              esac
+          done < <(tr ':' '\n' < "$RUNNER_TEMP/path-before" | grep -v '^$')
+          exit $rc
