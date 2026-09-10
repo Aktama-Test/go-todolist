@@ -1,0 +1,31 @@
+name: ARM snapshot repro (T-11016)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build-arm-image:
+    runs-on: depot-ubuntu-24.04-arm-4
+    snapshot:
+      image-name: arm-snap-check
+      version: v1
+      with:
+        max-age: 1d
+    steps:
+      - name: Record build arch
+        run: |
+          uname -m
+          sudo install -d /opt/arm-snap
+          uname -m | sudo tee /opt/arm-snap/built-on
+
+  use-arm-image:
+    needs: build-arm-image
+    runs-on:
+      size: 4x16
+      image: arm-snap-check:v1
+    steps:
+      - name: Verify snapshot arch
+        run: |
+          echo "running on: $(uname -m)"
+          echo "snapshot built on: $(cat /opt/arm-snap/built-on)"
+          test "$(uname -m)" = aarch64

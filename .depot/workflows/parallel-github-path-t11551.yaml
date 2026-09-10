@@ -107,12 +107,12 @@ jobs:
       - fail-fast: false
         parallel:
           - name: Composite A
-            uses: ./.github/actions/path-writer
+            uses: ./.depot/actions/path-writer
             with:
               tag: a
               sibling: b
           - name: Composite B
-            uses: ./.github/actions/path-writer
+            uses: ./.depot/actions/path-writer
             with:
               tag: b
               sibling: a

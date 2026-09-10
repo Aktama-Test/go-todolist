@@ -1,0 +1,14 @@
+name: ARM snapshot bad key repro (T-11016)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build-arm-image:
+    runs-on: depot-ubuntu-24.04-arm-4
+    snapshot:
+      image-name: arm-badkey-check
+      arch: arm64
+    steps:
+      - name: Record build arch
+        run: uname -m
