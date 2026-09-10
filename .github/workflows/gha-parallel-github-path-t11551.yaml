@@ -5,7 +5,11 @@ on:
 
 jobs:
   race:
-    runs-on: depot-ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [depot-ubuntu-24.04, ubuntu-latest]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
