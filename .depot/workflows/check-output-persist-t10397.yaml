@@ -1,0 +1,84 @@
+name: Check run output persistence repro (T-10397)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  checks: write
+  statuses: write
+
+jobs:
+  target:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - name: Hold in_progress while the writer patches this job's check run
+        run: sleep 180
+
+  writer:
+    runs-on: depot-ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Find the check run Depot published for the target job
+        run: |
+          for _ in $(seq 1 60); do
+            gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs" --paginate \
+              --jq '.check_runs[] | select(.name | endswith("/ target"))' > run.json || true
+            if [ -s run.json ]; then break; fi
+            sleep 5
+          done
+          test -s run.json
+          jq '{id, name, status, conclusion, details_url, app: .app.slug, output}' run.json
+          jq -r .id run.json > check_id
+          jq -r .details_url run.json > details_url
+
+      - name: Patch output onto it
+        run: |
+          jq -n --arg url "$(cat details_url)" '{
+            output: {
+              title: "Depot CI job",
+              summary: ("Written by the workflow, not by Depot. [Open this job in Depot](" + $url + ")")
+            }
+          }' | gh api -X PATCH "repos/$GITHUB_REPOSITORY/check-runs/$(cat check_id)" --input - > /dev/null
+
+      - name: Read it back before Depot's completion update
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/check-runs/$(cat check_id)" \
+            --jq '{status, conclusion, output_title: .output.title, output_summary: .output.summary}'
+
+      - name: Post a commit status pointing at the same job
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=success \
+            -f context="Depot one-click probe / target" \
+            -f target_url="$(cat details_url)" \
+            -f description="Commit status alongside the check run" \
+            --jq '{context, state, target_url}'
+
+  verify:
+    needs: [target, writer]
+    runs-on: depot-ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Wait for Depot's completion update, then re-read the output
+        run: |
+          for _ in $(seq 1 60); do
+            gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs" --paginate \
+              --jq '.check_runs[] | select(.name | endswith("/ target"))' > run.json || true
+            if [ -s run.json ] && [ "$(jq -r .status run.json)" = "completed" ]; then break; fi
+            sleep 5
+          done
+          # Give any trailing Depot update a chance to land before reading.
+          sleep 20
+          gh api "repos/$GITHUB_REPOSITORY/check-runs/$(jq -r .id run.json)" \
+            --jq '{status, conclusion, output_title: .output.title, output_summary: .output.summary}'
+
+      - name: Verdict
+        run: |
+          title=$(gh api "repos/$GITHUB_REPOSITORY/check-runs/$(jq -r .id run.json)" --jq '.output.title // ""')
+          if [ "$title" = "Depot CI job" ]; then
+            echo "PRESERVED: Depot's completion update left the workflow-written output intact"
+          else
+            echo "CLEARED: output.title is now '$title'"
+          fi
