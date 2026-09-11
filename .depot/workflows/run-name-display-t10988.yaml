@@ -1,0 +1,27 @@
+name: Run name display repro (T-10988)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        description: Environment
+        default: staging
+        options:
+          - staging
+          - production
+      override_sha:
+        type: string
+        description: Override SHA
+        required: false
+
+run-name: "[${{ inputs.environment != '' && inputs.environment || 'staging' }}] Deploy (${{ inputs.override_sha != '' && inputs.override_sha || github.ref_name }})"
+
+jobs:
+  show:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: github.workflow must stay the static name
+        run: |
+          echo "github.workflow = ${{ github.workflow }}"
+          test "${{ github.workflow }}" = "Run name display repro (T-10988)"
