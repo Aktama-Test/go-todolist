@@ -1,0 +1,95 @@
+name: SOCKS proxy .localhost bypass repro (T-11741)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repro:
+    runs-on: depot-ubuntu-24.04-8
+    steps:
+      - name: Recon
+        run: |
+          echo "## Compute"
+          # platformV2 in the runner's own view; Metal microVMs have no IMDS.
+          curl -s --max-time 2 http://169.254.169.254/latest/meta-data/instance-type \
+            && echo "  <- EC2 instance type (so: EC2)" \
+            || echo "  no IMDS response (so: Metal)"
+          echo
+          echo "## /etc/resolv.conf"
+          cat /etc/resolv.conf
+          echo
+          echo "## systemd-resolved"
+          systemctl is-active systemd-resolved || true
+          echo
+          echo "## daemon.json"
+          sudo cat /etc/docker/daemon.json || echo "(none)"
+
+      - name: Resolution of each name, before any hosts entry
+        run: |
+          for n in localhost k3d-registry.localhost depot-repro.test; do
+            printf '%-26s ' "$n"
+            getent hosts "$n" || echo "NXDOMAIN"
+          done
+
+      - name: Add insecure-registries, keep existing proxies, restart Docker
+        run: |
+          set -euxo pipefail
+          sudo cp /etc/docker/daemon.json /tmp/daemon.json.bak
+          sudo jq '.["insecure-registries"] = ["localhost:5000","k3d-registry.localhost:5000","depot-repro.test:5000"]' \
+            /tmp/daemon.json.bak | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          sleep 5
+          docker info --format '{{json .RegistryConfig.IndexConfigs}}' | head -c 400; echo
+          # Confirm the SOCKS proxy config survived the restart.
+          sudo cat /etc/docker/daemon.json | jq .proxies
+
+      - name: Start a local registry on 127.0.0.1:5000
+        run: |
+          set -euxo pipefail
+          docker run -d --name reg -p 127.0.0.1:5000:5000 registry:2
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:5000/v2/ >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:5000/v2/ && echo "registry up"
+          docker pull alpine:3.20
+
+      - name: Push cases, no /etc/hosts entries
+        run: |
+          set +e
+          for host in localhost k3d-registry.localhost depot-repro.test; do
+            echo "=============== $host:5000"
+            docker tag alpine:3.20 "$host:5000/alpine:t11741"
+            docker push "$host:5000/alpine:t11741" 2>&1 | tail -4
+            echo "exit=${PIPESTATUS[0]}"
+            echo
+          done
+
+      - name: Add /etc/hosts entries and retry the two that are proxied
+        run: |
+          set +e
+          echo '127.0.0.1 k3d-registry.localhost depot-repro.test' | sudo tee -a /etc/hosts
+          for n in k3d-registry.localhost depot-repro.test; do
+            printf '%-26s ' "$n"; getent hosts "$n"
+          done
+          echo
+          for host in k3d-registry.localhost depot-repro.test; do
+            echo "=============== $host:5000 (with hosts entry)"
+            docker push "$host:5000/alpine:t11741" 2>&1 | tail -4
+            echo "exit=${PIPESTATUS[0]}"
+            echo
+          done
+
+      - name: Validate the proposed fix, no-proxy instead of the hosts entry
+        run: |
+          set +e
+          sudo sed -i '/k3d-registry.localhost/d' /etc/hosts
+          getent hosts k3d-registry.localhost || echo "k3d-registry.localhost NXDOMAIN again"
+          sudo jq '.proxies["no-proxy"] = ".localhost"' /etc/docker/daemon.json | sudo tee /tmp/d.json >/dev/null
+          sudo cp /tmp/d.json /etc/docker/daemon.json
+          sudo cat /etc/docker/daemon.json | jq .proxies
+          sudo systemctl restart docker
+          sleep 5
+          echo "=============== k3d-registry.localhost:5000 (no-proxy, no hosts entry)"
+          docker push k3d-registry.localhost:5000/alpine:t11741 2>&1 | tail -4
+          echo "exit=${PIPESTATUS[0]}"
