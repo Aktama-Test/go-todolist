@@ -6,86 +6,69 @@ on:
 jobs:
   repro:
     runs-on: depot-ubuntu-24.04-8
+    timeout-minutes: 10
     steps:
-      - name: Recon
-        run: |
-          curl -s --max-time 2 http://169.254.169.254/latest/meta-data/instance-type \
-            && echo "  <- EC2" || echo "  no IMDS, so Metal"
-          echo "## resolv.conf"; cat /etc/resolv.conf
-          echo "## hosts"; cat /etc/hosts
-          echo "## daemon.json"; sudo cat /etc/docker/daemon.json
-
-      - name: Does agentd share the runner's /etc/hosts?
-        run: |
-          set +e
-          pid=$(pgrep -x agentd | head -1); echo "agentd pid=$pid"
-          echo "runner mntns: $(readlink /proc/self/ns/mnt)"
-          echo "agentd  mntns: $(sudo readlink /proc/$pid/ns/mnt)"
-          sudo cmp -s /etc/hosts /proc/$pid/root/etc/hosts \
-            && echo "SAME /etc/hosts" || echo "DIFFERENT /etc/hosts"
-
-      # Seed one name before anything queries it, so Go's 5s hosts cache
-      # cannot mask the result.
-      - name: Seed pre-hosts.test in /etc/hosts up front
-        run: |
-          echo '127.0.0.1 pre-hosts.test' | sudo tee -a /etc/hosts
-
-      - name: Insecure registries, restart Docker
+      - name: Identify runner and prepare registry
         run: |
           set -euxo pipefail
-          sudo jq '.["insecure-registries"] = ["localhost:5000","k3d-registry.localhost:5000","depot-repro.test:5000","pre-hosts.test:5000","late-hosts.test:5000"]' \
-            /etc/docker/daemon.json | sudo tee /tmp/d1.json >/dev/null
-          sudo cp /tmp/d1.json /etc/docker/daemon.json
-          sudo systemctl restart docker
-          sleep 10
-          docker version --format '{{.Server.Version}}'
-
-      - name: Start registry
-        run: |
-          set -euxo pipefail
-          docker run -d --name reg -p 127.0.0.1:5000:5000 registry:2
-          for i in $(seq 1 30); do curl -sf http://127.0.0.1:5000/v2/ >/dev/null && break; sleep 1; done
+          cat /sys/class/dmi/id/product_name
+          token=$(curl -fsS --max-time 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token || true)
+          if [ -n "$token" ]; then
+            echo 'EC2 runner; rerun to validate Metal'
+            exit 1
+          fi
+          cat /etc/resolv.conf
+          sudo cat /etc/docker/daemon.json
+          sudo jq -e '.proxies["http-proxy"] == "socks5://127.0.0.1:982" and .proxies["https-proxy"] == "socks5://127.0.0.1:982"' /etc/docker/daemon.json
+          docker pull registry:2
           docker pull alpine:3.20
-
-      - name: Baseline pushes
-        run: |
-          set +e
-          for host in localhost k3d-registry.localhost depot-repro.test pre-hosts.test; do
-            echo "=============== $host:5000"
-            docker tag alpine:3.20 "$host:5000/alpine:t11741"
-            docker push "$host:5000/alpine:t11741" 2>&1 | tail -3
-            echo "exit=${PIPESTATUS[0]}"
-          done
-
-      - name: Add late-hosts.test, wait out the Go hosts cache, then push
-        run: |
-          set +e
-          echo "=============== late-hosts.test:5000 BEFORE hosts entry"
-          docker tag alpine:3.20 late-hosts.test:5000/alpine:t11741
-          docker push late-hosts.test:5000/alpine:t11741 2>&1 | tail -2
-          echo "exit=${PIPESTATUS[0]}"
-          echo '127.0.0.1 late-hosts.test' | sudo tee -a /etc/hosts
-          echo "sleeping 30s to clear Go's 5s hosts cache"
-          sleep 30
-          echo "=============== late-hosts.test:5000 AFTER hosts entry + 30s"
-          docker push late-hosts.test:5000/alpine:t11741 2>&1 | tail -3
-          echo "exit=${PIPESTATUS[0]}"
-          echo "=============== depot-repro.test:5000 (still no hosts entry, control)"
-          docker push depot-repro.test:5000/alpine:t11741 2>&1 | tail -2
-          echo "exit=${PIPESTATUS[0]}"
-
-      - name: Validate the no-proxy fix
-        run: |
-          set +e
-          sudo jq '.proxies["no-proxy"] = ".test"' /etc/docker/daemon.json | sudo tee /tmp/d2.json >/dev/null
-          sudo cp /tmp/d2.json /etc/docker/daemon.json
-          sudo sed -i '/late-hosts.test/d;/pre-hosts.test/d' /etc/hosts
-          sleep 30
-          sudo systemctl reset-failed docker.service
+          sudo jq '.["insecure-registries"] = ["localhost:5000", "k3d-registry.localhost:5000"] | del(.proxies["no-proxy"])' /etc/docker/daemon.json > /tmp/daemon-baseline.json
+          sudo cp /tmp/daemon-baseline.json /etc/docker/daemon.json
           sudo systemctl restart docker
-          if [ $? -ne 0 ]; then sudo journalctl -xeu docker.service --no-pager | tail -30; fi
-          sleep 10
-          docker version --format '{{.Server.Version}}' || true
-          echo "=============== depot-repro.test:5000 (no-proxy=.test, no hosts entry)"
-          docker push depot-repro.test:5000/alpine:t11741 2>&1 | tail -3
-          echo "exit=${PIPESTATUS[0]}"
+          docker run -d --name dep6542-registry -p 127.0.0.1:5000:5000 registry:2
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:5000/v2/ && break; sleep 1; done
+          docker tag alpine:3.20 localhost:5000/alpine:dep6542
+          docker tag alpine:3.20 k3d-registry.localhost:5000/alpine:dep6542
+
+      - name: Configure public DNS without a hosts workaround
+        run: |
+          set -euxo pipefail
+          sudo tailscale set --accept-dns=false
+          sudo unlink /etc/resolv.conf || sudo rm -f /etc/resolv.conf
+          printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' | sudo tee /etc/resolv.conf
+          cat /etc/resolv.conf
+          if grep -F k3d-registry.localhost /etc/hosts; then exit 1; fi
+          dig +time=3 +tries=1 registry-1.docker.io
+          dig +time=3 +tries=1 k3d-registry.localhost
+          getent hosts k3d-registry.localhost || true
+          docker push localhost:5000/alpine:dep6542
+
+      - name: Confirm baseline failure
+        run: |
+          set +e
+          set -uo pipefail
+          timeout 90 docker push k3d-registry.localhost:5000/alpine:dep6542 2>&1 | tee /tmp/baseline.log
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "baseline_exit=$result"
+          test "$result" -ne 0
+          grep -E 'socks connect|host unreachable' /tmp/baseline.log
+
+      - name: Apply only the proposed no-proxy setting and retry
+        run: |
+          set -euxo pipefail
+          sudo jq '.proxies["no-proxy"] = ".localhost"' /etc/docker/daemon.json > /tmp/daemon-fixed.json
+          sudo cp /tmp/daemon-fixed.json /etc/docker/daemon.json
+          sudo systemctl restart docker
+          docker start dep6542-registry
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:5000/v2/ && break; sleep 1; done
+          if grep -F k3d-registry.localhost /etc/hosts; then exit 1; fi
+          cat /etc/resolv.conf
+          docker info --format '{{json .}}' | jq '{HTTPProxy, HTTPSProxy, NoProxy}'
+          timeout 90 docker push k3d-registry.localhost:5000/alpine:dep6542
+          docker pull busybox:1.37
+
+      - name: Diagnostics
+        if: always()
+        run: |
+          sudo journalctl -u docker -u agentd --since '-10 min' --no-pager | tail -100
