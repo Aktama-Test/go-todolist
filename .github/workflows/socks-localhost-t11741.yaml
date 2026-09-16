@@ -24,6 +24,7 @@ jobs:
           docker pull alpine:3.20
           sudo jq '.["insecure-registries"] = ["localhost:5000", "k3d-registry.localhost:5000"] | del(.proxies["no-proxy"])' /etc/docker/daemon.json > /tmp/daemon-baseline.json
           sudo cp /tmp/daemon-baseline.json /etc/docker/daemon.json
+          sudo systemctl reset-failed docker.service
           sudo systemctl restart docker
           docker run -d --name dep6542-registry -p 127.0.0.1:5000:5000 registry:2
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:5000/v2/ && break; sleep 1; done
@@ -36,6 +37,7 @@ jobs:
           sudo tailscale set --accept-dns=false
           sudo unlink /etc/resolv.conf || sudo rm -f /etc/resolv.conf
           printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' | sudo tee /etc/resolv.conf
+          sleep 6 # Allow Go to reload resolv.conf after the DNS change.
           cat /etc/resolv.conf
           if grep -F k3d-registry.localhost /etc/hosts; then exit 1; fi
           dig +time=3 +tries=1 registry-1.docker.io
@@ -59,6 +61,7 @@ jobs:
           set -euxo pipefail
           sudo jq '.proxies["no-proxy"] = ".localhost"' /etc/docker/daemon.json > /tmp/daemon-fixed.json
           sudo cp /tmp/daemon-fixed.json /etc/docker/daemon.json
+          sudo systemctl reset-failed docker.service
           sudo systemctl restart docker
           docker start dep6542-registry
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:5000/v2/ && break; sleep 1; done
