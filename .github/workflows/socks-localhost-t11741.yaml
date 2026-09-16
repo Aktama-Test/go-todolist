@@ -8,6 +8,12 @@ jobs:
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
+      - name: Build the agentd DNS helper
+        working-directory: dep6542
+        run: |
+          go test ./...
+          CGO_ENABLED=0 go build -o /tmp/dep6542-dns .
       - name: Identify runner and prepare registry
         run: |
           set -euxo pipefail
@@ -63,12 +69,20 @@ jobs:
         id: resolver
         run: |
           set -euxo pipefail
-          systemctl is-enabled systemd-resolved || true
-          sudo mkdir -p /etc/systemd/resolved.conf.d
-          printf '[Resolve]\nDNS=8.8.8.8 1.1.1.1\nDNSStubListener=yes\n' | sudo tee /etc/systemd/resolved.conf.d/dep6542.conf
-          sudo systemctl start systemd-resolved
-          sudo systemctl restart systemd-resolved
-          sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+          cp /etc/resolv.conf /tmp/resolv-before
+          mkdir /tmp/dep6542-fail
+          printf '#!/bin/sh\nexit 47\n' > /tmp/dep6542-fail/systemctl
+          chmod +x /tmp/dep6542-fail/systemctl
+          if sudo env PATH="/tmp/dep6542-fail:$PATH" /tmp/dep6542-dns; then
+            echo 'Expected the failed service startup to return an error'
+            exit 1
+          fi
+          cmp /etc/resolv.conf /tmp/resolv-before
+          test ! -L /etc/resolv.conf
+          sudo /tmp/dep6542-dns
+          # A repeated invocation must preserve the working managed symlink.
+          sudo /tmp/dep6542-dns
+          sudo cat /run/systemd/resolved.conf.d/agentd.conf
           sleep 6
           readlink -f /etc/resolv.conf
           cat /etc/resolv.conf
@@ -80,7 +94,6 @@ jobs:
           getent ahostsv4 registry-1.docker.io
 
       - name: Push with resolved and existing SOCKS configuration
-        continue-on-error: true
         run: |
           set -euxo pipefail
           sudo jq -e '.proxies["no-proxy"] == null' /etc/docker/daemon.json
@@ -105,6 +118,7 @@ jobs:
         if: ${{ !cancelled() && steps.resolver.outcome == 'success' }}
         run: |
           set -euxo pipefail
+          sudo systemctl restart tailscaled
           sudo tailscale set --accept-dns=true
           sleep 6
           readlink -f /etc/resolv.conf
