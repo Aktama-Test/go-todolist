@@ -110,24 +110,12 @@ jobs:
           timeout 90 docker push k3d-registry.localhost:5000/alpine:dep6542
           docker pull busybox:1.37
 
-      - name: Push with resolved and no-proxy
-        run: |
-          set -euxo pipefail
-          sudo jq '.proxies["no-proxy"] = ".localhost"' /etc/docker/daemon.json > /tmp/daemon-fixed.json
-          sudo cp /tmp/daemon-fixed.json /etc/docker/daemon.json
-          sudo systemctl reset-failed docker.service
-          sudo systemctl restart docker
-          docker start dep6542-registry
-          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:5000/v2/ && break; sleep 1; done
-          if grep -F k3d-registry.localhost /etc/hosts; then exit 1; fi
-          docker info --format '{{json .}}' | jq '{HttpProxy, HttpsProxy, NoProxy}'
-          timeout 90 docker push k3d-registry.localhost:5000/alpine:dep6542
-          docker pull busybox:1.37
-
       - name: Bring up the existing Tailscale daemon and verify integration
         if: ${{ !cancelled() && steps.resolver.outcome == 'success' }}
         run: |
           set -euxo pipefail
+          sudo jq -e '.proxies["no-proxy"] == null and .proxies["http-proxy"] == "socks5://127.0.0.1:982" and .proxies["https-proxy"] == "socks5://127.0.0.1:982"' /etc/docker/daemon.json
+          docker info --format '{{json .}}' | jq '{HttpProxy, HttpsProxy, NoProxy}'
           sudo systemctl enable --now tailscaled
           sudo tailscale up
           sudo tailscale set --accept-dns=true
