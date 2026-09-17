@@ -65,6 +65,16 @@ jobs:
           test "$result" -ne 0
           grep -E 'socks connect|host unreachable' /tmp/baseline.log
 
+      - name: Start Tailscale against plain DNS before the helper
+        run: |
+          set -euxo pipefail
+          sudo tailscale down
+          sudo systemctl restart tailscaled
+          systemctl show tailscaled -p MainPID --value > /tmp/tailscaled-before
+          test "$(cat /tmp/tailscaled-before)" -gt 0
+          test ! -L /etc/resolv.conf
+          cat /etc/resolv.conf
+
       - name: Route host DNS through systemd-resolved
         id: resolver
         run: |
@@ -114,16 +124,23 @@ jobs:
           timeout 90 docker push k3d-registry.localhost:5000/alpine:dep6542
           docker pull busybox:1.37
 
-      - name: Re-enable Tailscale DNS and verify integration
+      - name: Bring up the existing Tailscale daemon and verify integration
         if: ${{ !cancelled() && steps.resolver.outcome == 'success' }}
         run: |
           set -euxo pipefail
-          sudo systemctl restart tailscaled
+          sudo systemctl enable --now tailscaled
+          sudo tailscale up
           sudo tailscale set --accept-dns=true
+          test "$(systemctl show tailscaled -p MainPID --value)" = "$(cat /tmp/tailscaled-before)"
           sleep 6
           readlink -f /etc/resolv.conf
           cat /etc/resolv.conf
           resolvectl status
+          if test -L /etc/resolv.conf; then
+            echo 'RESULT: resolver symlink preserved'
+          else
+            echo 'RESULT: Tailscale replaced resolver symlink with a regular file'
+          fi
           getent ahostsv4 "$(cat /tmp/tailnet-dns-name)" | tee /tmp/tailnet-lookup
           grep -F "$(cat /tmp/tailnet-ip)" /tmp/tailnet-lookup
           getent ahostsv4 registry-1.docker.io

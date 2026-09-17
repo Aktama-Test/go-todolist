@@ -3,7 +3,6 @@ package dns
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -46,26 +45,11 @@ func SetupResolved(ctx context.Context) error {
 	if out, err := exec.CommandContext(ctx, "systemctl", "restart", "systemd-resolved").CombinedOutput(); err != nil {
 		return fmt.Errorf("start local resolver: %w: %s", err, out)
 	}
-	resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.53:53")
-	}}
-	addresses, err := resolver.LookupNetIP(ctx, "ip", "registry.localhost")
-	if err != nil {
-		return fmt.Errorf("check local resolver: %w", err)
-	}
-	if len(addresses) == 0 {
-		return fmt.Errorf("local resolver returned no localhost addresses")
-	}
-	for _, address := range addresses {
-		if !address.IsLoopback() {
-			return fmt.Errorf("local resolver returned non-loopback address %s", address)
-		}
-	}
 	if _, err := os.Stat("/run/systemd/resolve/stub-resolv.conf"); err != nil {
 		return err
 	}
 
-	// Replace atomically only after the resolver is ready; failures retain host DNS.
+	// Replace atomically so a failed rename retains the existing DNS configuration.
 	dir, err := os.MkdirTemp("/etc", ".agentd-resolved-")
 	if err != nil {
 		return err
