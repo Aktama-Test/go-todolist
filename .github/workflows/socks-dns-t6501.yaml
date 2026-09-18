@@ -1,0 +1,96 @@
+name: SOCKS DNS query counts repro (T-6501)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Install packet inspection tool
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tshark > /dev/null
+      - name: Measure deployed proxy DNS during connections and pulls
+        shell: bash
+        run: |
+          set -euo pipefail
+          agent_pid=$(pgrep -xo agentd)
+          sudo /proc/"$agent_pid"/exe --version
+          uname -srmo
+          cat /etc/resolv.conf
+          sudo ss -ltnp 'sport = :982'
+          tshark --version | head -1
+          work=$(mktemp -d)
+          trap 'if [[ -n "${capture_pid:-}" ]]; then sudo kill -INT "$capture_pid" 2>/dev/null || true; fi' EXIT
+
+          cat > "$work/summarize.py" <<'PYTHON'
+          import collections, csv, ipaddress, sys
+          dns = collections.Counter()
+          connects = collections.defaultdict(set)
+          syns = set()
+          with open(sys.argv[1]) as f:
+              for row in csv.reader(f, delimiter="\t"):
+                  if len(row) != 10:
+                      continue
+                  ts, src, dst, qname, qtype, command, host, stream, syn, ack = row
+                  if qname:
+                      name = qname.rstrip(".")
+                      if not (name.endswith("docker.io") or name.endswith("amazonaws.com") or name.endswith("cloudflarestorage.com") or name.endswith("cloudflare.docker.com")):
+                          name = "[other DNS]"
+                      route = "stub" if dst and ipaddress.ip_address(dst).is_loopback else "upstream"
+                      dns[(name, qtype, route)] += 1
+                  if command == "1" and host:
+                      connects[host].add(stream)
+                  if syn == "1" and ack == "0":
+                      syns.add(stream)
+          print("SOCKS TCP connections:", len(syns))
+          print("SOCKS CONNECT requests by destination:")
+          for host, streams in sorted(connects.items()):
+              print(" ", host, len(streams))
+          print("DNS questions by name, type (1=A, 28=AAAA), resolver hop:")
+          for key, count in sorted(dns.items()):
+              print(" ", *key, count)
+          if not syns or not connects:
+              raise SystemExit("No decoded SOCKS traffic: this measurement is inconclusive")
+          PYTHON
+
+          capture() {
+            label=$1
+            shift
+            echo "=== $label ==="
+            sudo tshark -n -l -i any -a duration:120 \
+              -f 'port 53 or tcp port 982' -d tcp.port==982,socks \
+              -Y 'dns.flags.response == 0 or (tcp.dstport == 982 and (socks.command == 1 or tcp.flags.syn == 1))' \
+              -T fields -E occurrence=f \
+              -e frame.time_epoch -e ip.src -e ip.dst -e dns.qry.name -e dns.qry.type \
+              -e socks.command -e socks.remote_name -e tcp.stream -e tcp.flags.syn -e tcp.flags.ack \
+              > "$work/$label.tsv" 2> "$work/$label.capture.log" &
+            capture_pid=$!
+            sleep 2
+            started=$SECONDS
+            set +e
+            "$@"
+            result=$?
+            set -e
+            elapsed=$((SECONDS-started))
+            sleep 1
+            sudo kill -INT "$capture_pid" 2>/dev/null || true
+            wait "$capture_pid" || true
+            capture_pid=
+            echo "command_exit=$result elapsed_seconds=$elapsed"
+            cat "$work/$label.capture.log"
+            python3 "$work/summarize.py" "$work/$label.tsv"
+            return "$result"
+          }
+          connections() {
+            for i in $(seq 1 20); do
+              curl --silent --show-error --max-time 15 --socks5-hostname 127.0.0.1:982 \
+                --output /dev/null --write-out '%{http_code}\n' https://registry-1.docker.io/v2/
+            done
+          }
+          capture direct-20 connections
+          capture alpine docker pull alpine:3.21
+          capture debian docker pull debian:bookworm-slim
+          capture python docker pull python:3.13-alpine
