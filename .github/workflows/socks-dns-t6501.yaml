@@ -19,7 +19,7 @@ jobs:
           agent_pid=$(pgrep -xo agentd)
           sudo /proc/"$agent_pid"/exe --version
           uname -srmo
-          cat /etc/resolv.conf
+          awk '$1 == "nameserver" {print}' /etc/resolv.conf
           sudo ss -ltnp 'sport = :982'
           tshark --version | head -1
           work=$(mktemp -d)
@@ -29,30 +29,27 @@ jobs:
           import collections, csv, ipaddress, sys
           dns = collections.Counter()
           connects = collections.defaultdict(set)
-          syns = set()
           with open(sys.argv[1]) as f:
               for row in csv.reader(f, delimiter="\t"):
-                  if len(row) != 10:
+                  if len(row) != 8:
                       continue
-                  ts, src, dst, qname, qtype, command, host, stream, syn, ack = row
+                  ts, src, dst, qname, qtype, command, host, stream = row
                   if qname:
                       name = qname.rstrip(".")
                       if not (name.endswith("docker.io") or name.endswith("amazonaws.com") or name.endswith("cloudflarestorage.com") or name.endswith("cloudflare.docker.com")):
                           name = "[other DNS]"
-                      route = "stub" if dst and ipaddress.ip_address(dst).is_loopback else "upstream"
+                      route = "tailscale" if dst == "100.100.100.100" else ("stub" if dst and ipaddress.ip_address(dst).is_loopback else "upstream")
                       dns[(name, qtype, route)] += 1
                   if command == "1" and host:
                       connects[host].add(stream)
-                  if syn == "1" and ack == "0":
-                      syns.add(stream)
-          print("SOCKS TCP connections:", len(syns))
+          print("SOCKS CONNECT requests:", sum(map(len, connects.values())))
           print("SOCKS CONNECT requests by destination:")
           for host, streams in sorted(connects.items()):
               print(" ", host, len(streams))
           print("DNS questions by name, type (1=A, 28=AAAA), resolver hop:")
           for key, count in sorted(dns.items()):
               print(" ", *key, count)
-          if not syns or not connects:
+          if not connects:
               raise SystemExit("No decoded SOCKS traffic: this measurement is inconclusive")
           PYTHON
 
@@ -62,10 +59,10 @@ jobs:
             echo "=== $label ==="
             sudo tshark -n -l -i any -a duration:120 \
               -f 'port 53 or tcp port 982' -d tcp.port==982,socks \
-              -Y 'dns.flags.response == 0 or (tcp.dstport == 982 and (socks.command == 1 or tcp.flags.syn == 1))' \
+              -Y 'dns.flags.response == 0 or (tcp.dstport == 982 and socks.command == 1)' \
               -T fields -E occurrence=f \
               -e frame.time_epoch -e ip.src -e ip.dst -e dns.qry.name -e dns.qry.type \
-              -e socks.command -e socks.remote_name -e tcp.stream -e tcp.flags.syn -e tcp.flags.ack \
+              -e socks.command -e socks.remote_name -e tcp.stream \
               > "$work/$label.tsv" 2> "$work/$label.capture.log" &
             capture_pid=$!
             sleep 2
