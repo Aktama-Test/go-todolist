@@ -1,0 +1,25 @@
+name: Self-repository $/ syntax repro (T-11787)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  depot-action:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - uses: $/.github/actions/self-repo-probe
+
+  github-action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: $/.github/actions/self-repo-probe
+
+  depot-reusable:
+    uses: $/.github/workflows/self-repo-syntax-called-t11787.yaml
+    with:
+      runs-on: depot-ubuntu-24.04
+
+  github-reusable:
+    uses: $/.github/workflows/self-repo-syntax-called-t11787.yaml
+    with:
+      runs-on: ubuntu-latest

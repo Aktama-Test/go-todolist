@@ -1,0 +1,14 @@
+name: Self-repository $/ syntax repro, called workflow (T-11787)
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        required: true
+        type: string
+
+jobs:
+  probe:
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - uses: $/.github/actions/self-repo-probe
