@@ -1,0 +1,6 @@
+name: Self-repo outer
+description: Local composite whose step references a sibling action with $/
+runs:
+  using: composite
+  steps:
+    - uses: $/.github/actions/self-repo-probe

@@ -23,3 +23,15 @@ jobs:
     uses: $/.github/workflows/self-repo-syntax-called-t11787.yaml
     with:
       runs-on: ubuntu-latest
+
+  depot-nested-local:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/self-repo-outer
+
+  github-nested-local:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/self-repo-outer
