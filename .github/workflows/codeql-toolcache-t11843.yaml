@@ -1,0 +1,13 @@
+name: CodeQL toolcache check repro (T-11843)
+on:
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: Inspect toolcache and toolchain sizes
+        run: |
+          echo "== /opt/hostedtoolcache"; ls -la /opt/hostedtoolcache
+          if [ -e /opt/hostedtoolcache/CodeQL ]; then echo "CodeQL PRESENT"; else echo "CodeQL ABSENT"; fi
+          echo "== df"; df -h / /home/runner/work
+          echo "== du"; sudo du -sh /usr/local/lib/android /opt/ghc /usr/local/.ghcup /usr/share/dotnet /usr/share/swift /opt/hostedtoolcache 2>/dev/null || true
