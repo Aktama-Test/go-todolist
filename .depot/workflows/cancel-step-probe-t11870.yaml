@@ -1,0 +1,21 @@
+name: Cancelled run step-level handlers repro (T-11870)
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        default: "600"
+jobs:
+  deploy:
+    runs-on: depot-ubuntu-24.04
+    cancel-timeout-minutes: 2
+    steps:
+      - run: echo "sleeping ${{ inputs.seconds }}s" && sleep ${{ inputs.seconds }}
+      - name: on-cancel
+        if: cancelled()
+        run: echo "STEP cancelled() ran, job.status=${{ job.status }}"
+      - name: on-always
+        if: always()
+        run: echo "STEP always() ran, job.status=${{ job.status }}"
+      - name: on-not-cancelled
+        if: ${{ !cancelled() }}
+        run: echo "STEP !cancelled() ran"
