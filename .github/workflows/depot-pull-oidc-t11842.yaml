@@ -31,7 +31,7 @@ jobs:
       - name: Save one small image
         env:
           DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
-        run: depot build --save --save-tag "$SAVE_TAG" --project "$DEPOT_PROJECT" -f Dockerfile.t11842 .
+        run: depot build --save --save-tag "$SAVE_TAG" --project "$DEPOT_PROJECT" --platform linux/amd64,linux/arm64 -f Dockerfile.t11842 .
 
   pull:
     needs: save
