@@ -2,7 +2,7 @@ name: Cancelled run watchdog listener repro (T-11870)
 on:
   workflow_run:
     workflows: ["Cancelled run always/cancelled jobs repro (T-11870)"]
-    types: [in_progress]
+    types: [requested]
 jobs:
   watch:
     runs-on: depot-ubuntu-24.04
