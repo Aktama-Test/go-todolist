@@ -1,0 +1,25 @@
+name: Cancelled run watchdog listener repro (T-11870)
+on:
+  workflow_run:
+    workflows: ["Cancelled run always/cancelled jobs repro (T-11870)"]
+    types: [in_progress]
+jobs:
+  watch:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: Poll the parent run until it is terminal
+        env:
+          DEPOT_TOKEN: ${{ secrets.DEPOT_SECRET_TOKEN }}
+          PARENT: ${{ github.event.workflow_run.id }}
+        run: |
+          echo "parent=$PARENT event_status=${{ github.event.workflow_run.status }}"
+          for i in $(seq 1 90); do
+            out=$(depot ci status "$PARENT" --output json 2>&1) || { echo "status call failed: $out"; exit 1; }
+            s=$(echo "$out" | jq -r .status)
+            echo "poll $i: parent status=$s"
+            case "$s" in
+              finished|failed|cancelled) echo "PARENT_CONCLUSION=$s"; exit 0 ;;
+            esac
+            sleep 10
+          done
+          echo "gave up"; exit 1
