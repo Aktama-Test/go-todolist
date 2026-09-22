@@ -7,7 +7,6 @@ on:
 jobs:
   deploy:
     runs-on: depot-ubuntu-24.04
-    cancel-timeout-minutes: 2
     steps:
       - run: echo "sleeping ${{ inputs.seconds }}s" && sleep ${{ inputs.seconds }}
       - name: on-cancel
