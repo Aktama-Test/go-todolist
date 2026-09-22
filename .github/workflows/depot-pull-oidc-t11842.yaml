@@ -1,0 +1,96 @@
+name: Parallel depot pull OIDC repro (T-11842)
+
+on:
+  workflow_dispatch:
+    inputs:
+      copies:
+        description: JSON array of matrix copies per runner label
+        default: "[1,2,3,4,5,6,7,8,9,10]"
+      pulls:
+        description: depot pull invocations per job
+        default: "28"
+      parallelism:
+        description: xargs -P
+        default: "8"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  DEPOT_PROJECT: 2mtnv574xd
+  SAVE_TAG: t11842
+
+jobs:
+  save:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: depot/use-action@v1.3.1
+      - name: Save one small image
+        env:
+          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+        run: depot build --save --save-tag "$SAVE_TAG" --project "$DEPOT_PROJECT" -f Dockerfile.t11842 .
+
+  pull:
+    needs: save
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [depot-ubuntu-24.04-arm, depot-ubuntu-24.04, ubuntu-latest]
+        copy: ${{ fromJSON(inputs.copies) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    env:
+      PULLS: ${{ inputs.pulls }}
+      PAR: ${{ inputs.parallelism }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: depot/use-action@v1.3.1
+
+      - name: Runner identity
+        run: echo "runner=$RUNNER_NAME arch=$(uname -m) kernel=$(uname -r) docker=$(docker version --format '{{.Server.Version}}' 2>/dev/null)"
+
+      # Step A: the GitHub ID-token endpoint alone, same fan-out the CLI produces.
+      - name: A. Parallel id-token requests
+        shell: bash
+        run: |
+          set -uo pipefail
+          : > /tmp/oidc-status.txt
+          seq 1 "$PULLS" | xargs -P "$PAR" -I{} bash -c '
+            code=$(curl -sS -o /tmp/oidc-body-{}.txt -w "%{http_code}" \
+              -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://depot.dev" 2>/tmp/oidc-err-{}.txt) || code="curl-error"
+            echo "{} $code" >> /tmp/oidc-status.txt
+            if [ "$code" != "200" ]; then
+              echo "::warning::id-token request {} returned $code"
+              head -c 400 /tmp/oidc-err-{}.txt; echo
+              head -c 400 /tmp/oidc-body-{}.txt; echo
+            fi
+          '
+          echo "status code counts:"
+          awk "{print \$2}" /tmp/oidc-status.txt | sort | uniq -c
+
+      # Step B: the real thing. No DEPOT_TOKEN, so every invocation resolves
+      # its token through the GitHub OIDC provider. DEPOT_DEBUG_OIDC prints
+      # the provider error that the CLI otherwise discards.
+      - name: B. Parallel depot pull via OIDC
+        shell: bash
+        env:
+          DEPOT_DEBUG_OIDC: "1"
+        run: |
+          set -uo pipefail
+          : > /tmp/pull-results.txt
+          seq 1 "$PULLS" | xargs -P "$PAR" -I{} bash -c '
+            if out=$(depot pull --progress plain --project "$DEPOT_PROJECT" --tag "$SAVE_TAG-{}" "$SAVE_TAG" 2>&1); then
+              echo "{} ok" >> /tmp/pull-results.txt
+            else
+              echo "{} FAIL" >> /tmp/pull-results.txt
+              echo "::warning::pull {} failed"
+              printf "%s\n" "$out" | tail -20
+            fi
+          '
+          echo "pull result counts:"
+          awk "{print \$2}" /tmp/pull-results.txt | sort | uniq -c
+          ! grep -q FAIL /tmp/pull-results.txt
