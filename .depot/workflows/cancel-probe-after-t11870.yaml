@@ -1,0 +1,10 @@
+name: Cancelled run workflow_run listener repro (T-11870)
+on:
+  workflow_run:
+    workflows: ["Cancelled run always/cancelled jobs repro (T-11870)"]
+    types: [completed]
+jobs:
+  report:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - run: echo "conclusion=${{ github.event.workflow_run.conclusion }}"

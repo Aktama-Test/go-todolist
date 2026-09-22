@@ -1,0 +1,23 @@
+name: Cancelled run always/cancelled jobs repro (T-11870)
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        default: "600"
+jobs:
+  sleep:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - run: echo "sleeping ${{ inputs.seconds }}s" && sleep ${{ inputs.seconds }}
+  always-job:
+    needs: sleep
+    if: always()
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - run: echo "always() ran, sleep result=${{ needs.sleep.result }}"
+  cancelled-job:
+    needs: sleep
+    if: cancelled()
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - run: echo "cancelled() ran, sleep result=${{ needs.sleep.result }}"
