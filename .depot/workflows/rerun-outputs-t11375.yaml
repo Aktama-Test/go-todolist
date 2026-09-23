@@ -1,0 +1,32 @@
+name: Full rerun clears reusable outputs repro (T-11375)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  release:
+    uses: ./.depot/workflows/rerun-outputs-reusable-t11375.yaml
+
+  package-build:
+    needs: release
+    runs-on: depot-ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [0, 1, 2]
+    steps:
+      - run: |
+          ref="${{ needs.release.outputs.ref }}"
+          echo "leg=${{ matrix.leg }} ref=$ref"
+          if [ -z "$ref" ]; then
+            echo "::error::needs.release.outputs.ref is empty"
+            exit 1
+          fi
+
+  delivery:
+    needs: package-build
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - run: |
+          echo "delivery fails on purpose so attempt 1 ends with a mix of success and failure"
+          exit 1

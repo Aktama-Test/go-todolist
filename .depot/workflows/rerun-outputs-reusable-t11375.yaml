@@ -1,0 +1,20 @@
+name: Full rerun reusable producer repro (T-11375)
+
+on:
+  workflow_call:
+    outputs:
+      ref:
+        description: Value produced by the release job
+        value: ${{ jobs.release.outputs.ref }}
+
+jobs:
+  release:
+    runs-on: depot-ubuntu-24.04
+    outputs:
+      ref: ${{ steps.emit.outputs.ref }}
+    steps:
+      - id: emit
+        run: |
+          ref="ref-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "emitted ref=$ref"
