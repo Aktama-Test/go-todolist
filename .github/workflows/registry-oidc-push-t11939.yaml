@@ -1,0 +1,55 @@
+name: Registry OIDC docker push repro (T-11939)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: Image to retag and push
+        default: t67llm9p7m.registry.depot.dev/2mtnv574xd:latest
+      target_repo:
+        description: Org-level repository to push to (created on first push)
+        default: go-todolist-t11939
+
+permissions:
+  id-token: write
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE: ${{ inputs.source }}
+      TARGET: t67llm9p7m.registry.depot.dev/${{ inputs.target_repo }}:${{ github.run_id }}
+    steps:
+      - name: Fetch GitHub OIDC token for audience https://depot.dev
+        id: oidc
+        shell: bash
+        run: |
+          set -euo pipefail
+          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://depot.dev" | jq -r .value)
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Pull source and retag
+        shell: bash
+        run: |
+          echo "${{ steps.oidc.outputs.token }}" | docker login "${SOURCE%%/*}" -u x-token --password-stdin
+          docker pull "$SOURCE"
+          docker tag "$SOURCE" "$TARGET"
+
+      - name: Negative control, logged-out push must fail
+        shell: bash
+        run: |
+          docker logout "${TARGET%%/*}"
+          if docker push "$TARGET"; then echo "logged-out push unexpectedly succeeded"; exit 1; fi
+
+      - name: docker push with the raw OIDC token
+        shell: bash
+        run: |
+          echo "${{ steps.oidc.outputs.token }}" | docker login "${TARGET%%/*}" -u x-token --password-stdin
+          docker push "$TARGET"
+
+      - name: Verify the pushed manifest
+        shell: bash
+        run: docker buildx imagetools inspect "$TARGET" | head -5
