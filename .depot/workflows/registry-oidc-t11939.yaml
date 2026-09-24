@@ -1,0 +1,70 @@
+name: Registry OIDC docker login repro (T-11939)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+
+env:
+  HOST: t67llm9p7m.registry.depot.dev
+  PULL_IMAGE: t67llm9p7m.registry.depot.dev/redis:7-alpine
+  PUSH_REPO: t67llm9p7m.registry.depot.dev/go-todolist-t11939
+  RUN_TAG: ${{ github.run_id }}
+
+jobs:
+  registry:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: a. Pre-existing state (names only, never values)
+        env:
+          SECRETS_DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+        run: |
+          echo "docker auths: $(jq -r '.auths // {} | keys | join(",")' ~/.docker/config.json 2>/dev/null || echo '(none)')"
+          echo "env names: $(env | cut -d= -f1 | grep -E 'DEPOT_|ACTIONS_ID_TOKEN|OIDC' | sort | tr '\n' ' ')"
+          prefix() { printf '%s' "$1" | awk -F_ '{ if (NF>=2) print $1"_"$2"_"; else print "(unset)" }'; }
+          echo "env DEPOT_TOKEN prefix: $(prefix "${DEPOT_TOKEN:-}")"
+          echo "secrets.DEPOT_TOKEN prefix: $(prefix "${SECRETS_DEPOT_TOKEN:-}")"
+
+      - name: b. Pre-login pull and push
+        run: |
+          if docker pull "$PULL_IMAGE"; then echo "RESULT prelogin pull: ok"; else echo "RESULT prelogin pull: FAIL"; fi
+          if docker image inspect "$PULL_IMAGE" >/dev/null 2>&1; then
+            docker tag "$PULL_IMAGE" "$PUSH_REPO:ci-prelogin-$RUN_TAG"
+            if docker push "$PUSH_REPO:ci-prelogin-$RUN_TAG"; then echo "RESULT prelogin push: ok"; else echo "RESULT prelogin push: FAIL"; fi
+          else
+            echo "RESULT prelogin push: skipped, no local image"
+          fi
+
+      - name: d. OIDC token login, pull, push
+        run: |
+          set -euo pipefail
+          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://depot.dev" | jq -r .value)
+          echo "::add-mask::$token"
+          python3 - "$(echo "$token" | cut -d. -f2)" <<'PY'
+          import base64, json, sys
+          p = sys.argv[1]; p += "=" * (-len(p) % 4)
+          d = json.loads(base64.urlsafe_b64decode(p))
+          print({k: d.get(k) for k in ("iss", "aud", "repository", "sub")})
+          PY
+          echo "$token" | docker login "$HOST" -u x-token --password-stdin
+          docker pull "$PULL_IMAGE" && echo "RESULT oidc pull: ok"
+          docker tag "$PULL_IMAGE" "$PUSH_REPO:ci-oidc-$RUN_TAG"
+          docker push "$PUSH_REPO:ci-oidc-$RUN_TAG" && echo "RESULT oidc push: ok"
+
+      - name: c. Logged-out pull and push
+        run: |
+          docker logout "$HOST"
+          if docker pull "$PULL_IMAGE"; then echo "RESULT loggedout pull: ok"; else echo "RESULT loggedout pull: FAIL"; fi
+          docker tag "$PULL_IMAGE" "$PUSH_REPO:ci-loggedout-$RUN_TAG"
+          if docker push "$PUSH_REPO:ci-loggedout-$RUN_TAG"; then echo "RESULT loggedout push: ok"; else echo "RESULT loggedout push: FAIL"; fi
+
+      - name: e. Built-in DEPOT_TOKEN login, pull, push
+        run: |
+          if [ -z "${DEPOT_TOKEN:-}" ]; then echo "RESULT jobtoken: DEPOT_TOKEN unset"; exit 0; fi
+          echo "$DEPOT_TOKEN" | docker login "$HOST" -u x-token --password-stdin || { echo "RESULT jobtoken login: FAIL"; exit 0; }
+          if docker pull "$PULL_IMAGE"; then echo "RESULT jobtoken pull: ok"; else echo "RESULT jobtoken pull: FAIL"; fi
+          docker tag "$PULL_IMAGE" "$PUSH_REPO:ci-jobtoken-$RUN_TAG"
+          if docker push "$PUSH_REPO:ci-jobtoken-$RUN_TAG"; then echo "RESULT jobtoken push: ok"; else echo "RESULT jobtoken push: FAIL"; fi
