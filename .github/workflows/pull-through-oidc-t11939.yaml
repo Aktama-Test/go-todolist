@@ -1,0 +1,56 @@
+name: Pull-through OIDC docker login repro (T-11939)
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Image to pull from the Akatama org registry host
+        default: t67llm9p7m.registry.depot.dev/2mtnv574xd:latest
+      runner:
+        description: runs-on label. GitHub-hosted avoids Depot's runner auto-login.
+        default: ubuntu-latest
+
+permissions:
+  id-token: write
+
+jobs:
+  pull:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    env:
+      IMAGE: ${{ inputs.image }}
+    steps:
+      - name: Registry auths present before login
+        run: jq -r '.auths // {} | keys[]' ~/.docker/config.json 2>/dev/null || echo "(none)"
+
+      - name: Fetch GitHub OIDC token for audience https://depot.dev
+        id: oidc
+        shell: bash
+        run: |
+          set -euo pipefail
+          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://depot.dev" | jq -r .value)
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+          python3 - "$(echo "$token" | cut -d. -f2)" <<'PY'
+          import base64, json, sys
+          p = sys.argv[1]; p += "=" * (-len(p) % 4)
+          d = json.loads(base64.urlsafe_b64decode(p))
+          print({k: d.get(k) for k in ("iss", "aud", "repository", "exp")})
+          PY
+
+      - name: Negative control, anonymous pull must fail
+        shell: bash
+        run: |
+          docker logout "${IMAGE%%/*}" >/dev/null 2>&1 || true
+          if docker pull "$IMAGE"; then echo "anonymous pull unexpectedly succeeded"; exit 1; fi
+
+      - name: docker login with the raw OIDC token
+        shell: bash
+        run: echo "${{ steps.oidc.outputs.token }}" | docker login "${IMAGE%%/*}" -u x-token --password-stdin
+
+      - name: docker pull
+        shell: bash
+        run: |
+          docker pull "$IMAGE"
+          docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}'
