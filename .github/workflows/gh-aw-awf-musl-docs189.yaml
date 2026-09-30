@@ -1,0 +1,54 @@
+name: gh-aw AWF musl false positive repro (docs#189)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repro:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [depot-ubuntu-24.04, ubuntu-24.04]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Recon
+        run: |
+          curl -s --max-time 2 http://169.254.169.254/latest/meta-data/instance-type \
+            && echo "  <- EC2" || echo "  no IMDS, so Metal"
+          echo "## os-release"; grep -E "^(PRETTY_NAME|ID)=" /etc/os-release
+          echo "## dmi"; cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name 2>/dev/null || true
+          echo "## docker"; docker info --format '{{.OperatingSystem}} / {{.KernelVersion}} / {{.ServerVersion}}'
+          echo "DOCKER_HOST=${DOCKER_HOST:-unset}"
+          echo "## musl packages"; dpkg -l | grep -E "^ii\s+musl" || echo "no musl packages"
+          echo "## musl loader"; ls -l /lib/ld-musl-*.so.1 /usr/lib/ld-musl-*.so.1 2>&1 || true
+          echo "## alpine-release"; ls -l /etc/alpine-release 2>&1 || true
+
+      - name: Install awf
+        run: |
+          curl -sSL https://raw.githubusercontent.com/github/gh-aw-firewall/main/install.sh | sudo bash
+          sudo awf --version
+
+      - name: Run awf as shipped
+        id: before
+        continue-on-error: true
+        run: sudo awf --allow-domains github.com -- cat /etc/os-release
+
+      - name: Agent container logs after first run
+        if: always()
+        continue-on-error: true
+        run: docker logs awf-agent 2>&1 | head -60 || true
+
+      - name: Remove musl packages
+        run: sudo apt-get remove -y musl-tools musl-dev musl || true
+
+      - name: Run awf after removing musl
+        id: after
+        continue-on-error: true
+        run: sudo awf --allow-domains github.com -- cat /etc/os-release
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "before: ${{ steps.before.outcome }}"
+          echo "after:  ${{ steps.after.outcome }}"
