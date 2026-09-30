@@ -32,7 +32,7 @@ jobs:
       - name: Run awf on the runner as it boots
         id: baseline
         continue-on-error: true
-        run: sudo awf --allow-domains github.com -- cat /etc/os-release
+        run: sudo awf --allow-domains github.com -- uname -a
 
       # The Metal runner image preinstalls musl-tools; on EC2 and GitHub-hosted this
       # step recreates that state so the same workflow shows the mechanism everywhere.
@@ -45,7 +45,7 @@ jobs:
       - name: Run awf with musl loader present
         id: with_musl
         continue-on-error: true
-        run: sudo awf --allow-domains github.com -- cat /etc/os-release
+        run: sudo awf --allow-domains github.com -- uname -a
 
       - name: Remove musl packages
         run: sudo apt-get remove -y musl-tools musl-dev musl
@@ -53,7 +53,7 @@ jobs:
       - name: Run awf after removing musl
         id: after
         continue-on-error: true
-        run: sudo awf --allow-domains github.com -- cat /etc/os-release
+        run: sudo awf --allow-domains github.com -- uname -a
 
       - name: Summary
         if: always()
