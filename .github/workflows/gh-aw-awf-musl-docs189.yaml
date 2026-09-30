@@ -29,18 +29,26 @@ jobs:
           curl -sSL https://raw.githubusercontent.com/github/gh-aw-firewall/main/install.sh | sudo bash
           sudo awf --version
 
-      - name: Run awf as shipped
-        id: before
+      - name: Run awf on the runner as it boots
+        id: baseline
         continue-on-error: true
         run: sudo awf --allow-domains github.com -- cat /etc/os-release
 
-      - name: Agent container logs after first run
-        if: always()
+      # The Metal runner image preinstalls musl-tools; on EC2 and GitHub-hosted this
+      # step recreates that state so the same workflow shows the mechanism everywhere.
+      - name: Install musl-tools (what the Metal image ships)
+        run: |
+          sudo apt-get install -y --no-install-recommends musl-tools
+          dpkg -l | grep -E "^ii\s+musl"
+          ls -l /lib/ld-musl-*.so.1
+
+      - name: Run awf with musl loader present
+        id: with_musl
         continue-on-error: true
-        run: docker logs awf-agent 2>&1 | head -60 || true
+        run: sudo awf --allow-domains github.com -- cat /etc/os-release
 
       - name: Remove musl packages
-        run: sudo apt-get remove -y musl-tools musl-dev musl || true
+        run: sudo apt-get remove -y musl-tools musl-dev musl
 
       - name: Run awf after removing musl
         id: after
@@ -50,5 +58,6 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "before: ${{ steps.before.outcome }}"
-          echo "after:  ${{ steps.after.outcome }}"
+          echo "baseline (image as booted): ${{ steps.baseline.outcome }}"
+          echo "with musl loader present:   ${{ steps.with_musl.outcome }}"
+          echo "after removing musl:        ${{ steps.after.outcome }}"
