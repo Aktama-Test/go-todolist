@@ -1,0 +1,25 @@
+name: initramfs update conf check repro (T-11758)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [depot-ubuntu-22.04, depot-ubuntu-24.04, depot-ubuntu-latest]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Image and initramfs-tools version
+        run: |
+          uname -r
+          . /etc/os-release && echo "$PRETTY_NAME"
+          dpkg -l initramfs-tools 2>/dev/null | tail -1 || echo "initramfs-tools not installed"
+      - name: Does /etc/initramfs-tools/update-initramfs.conf exist
+        run: |
+          ls -la /etc/initramfs-tools/ 2>&1 || echo "no /etc/initramfs-tools directory"
+          echo "=== update-initramfs.conf ==="
+          cat /etc/initramfs-tools/update-initramfs.conf 2>&1 || echo "conf file missing"
+          echo "=== effective setting ==="
+          grep -E '^update_initramfs=' /etc/initramfs-tools/update-initramfs.conf 2>/dev/null || echo "update_initramfs not set (script default is yes)"
