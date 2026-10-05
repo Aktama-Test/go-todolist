@@ -1,0 +1,30 @@
+name: Dispatch actor visibility repro (T-11980)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  show-actor:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: depot context via expressions
+        run: |
+          echo "depot.actor.kind:             ${{ depot.actor.kind }}"
+          echo "depot.actor.id:               ${{ depot.actor.id }}"
+          echo "depot.actor.email:            ${{ depot.actor.email }}"
+          echo "depot.actor.name:             ${{ depot.actor.name }}"
+          echo "depot.triggering_actor.kind:  ${{ depot.triggering_actor.kind }}"
+          echo "depot.triggering_actor.id:    ${{ depot.triggering_actor.id }}"
+          echo "depot.triggering_actor.email: ${{ depot.triggering_actor.email }}"
+          echo "depot.triggering_actor.name:  ${{ depot.triggering_actor.name }}"
+          echo "github.actor:                 ${{ github.actor }}"
+          echo "github.triggering_actor:      ${{ github.triggering_actor }}"
+
+      - name: depot context via env vars
+        run: env | grep '^DEPOT_\(TRIGGERING_\)\?ACTOR_' | sort
+
+  user-only:
+    if: depot.actor.kind == 'user'
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - run: echo "job-level if on depot.actor.kind == 'user' passed"
