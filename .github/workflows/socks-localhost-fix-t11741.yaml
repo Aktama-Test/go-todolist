@@ -12,26 +12,22 @@ jobs:
           curl -s --max-time 2 http://169.254.169.254/latest/meta-data/instance-type \
             && echo "  <- EC2" || echo "no IMDS, so Metal"
           echo "## agentd"; sudo journalctl -u agentd -o cat --no-pager | grep -m1 -i 'version' || true
-          echo "## resolv.conf"; cat /etc/resolv.conf
-          echo "## pre-tailscale backup"; sudo cat /etc/resolv.pre-tailscale-backup.conf 2>&1 || true
+          echo "## resolv.conf"; ls -l /etc/resolv.conf; grep -v '^#' /etc/resolv.conf
           echo "## resolved / tailscaled"; systemctl is-active systemd-resolved tailscaled || true
           echo "## nsswitch hosts"; grep '^hosts:' /etc/nsswitch.conf
-          echo "## hosts"; cat /etc/hosts
+          echo "## hosts"; grep -v '^#' /etc/hosts
           echo "## daemon.json as shipped"; sudo cat /etc/docker/daemon.json; echo
           echo "## docker info"; docker info 2>/dev/null | grep -iE 'proxy|Server Version'
 
-      - name: Stop Tailscale so resolv.conf stays put, then pin it to 8.8.8.8
+      - name: Stop Tailscale and show the native resolver
         run: |
           set -ux
           sudo tailscale down || true
           sudo systemctl stop tailscaled || true
           sleep 3
-          echo "## native resolv.conf after tailscale down"; cat /etc/resolv.conf
-          printf 'nameserver 8.8.8.8\n' | sudo tee /etc/resolv.conf
-          sleep 6
-          echo "## resolv.conf now"; cat /etc/resolv.conf
+          echo "## native resolv.conf"; ls -l /etc/resolv.conf; grep -v '^#' /etc/resolv.conf
+          sudo cat /etc/resolv.pre-tailscale-backup.conf 2>/dev/null || true
           getent hosts k3d-registry.localhost || echo "glibc: not found, exit=$?"
-          curl -sS --max-time 10 -o /dev/null -w 'github reachable: %{http_code}\n' https://api.github.com/
 
       - name: Registry, with plain HTTP allowed and the shipped proxies block kept
         run: |
@@ -46,11 +42,28 @@ jobs:
           docker pull alpine:3.20
           docker tag alpine:3.20 k3d-registry.localhost:5000/alpine:t11741
 
-      - name: A. Shipped config, 8.8.8.8, no hosts entry
+      - name: A. Shipped config, native resolver, no hosts entry
+        run: |
+          set +e
+          grep -v '^#' /etc/resolv.conf; grep k3d-registry /etc/hosts || echo "no hosts entry"
+          docker info | grep -i proxy
+          start=$(date +%s)
+          docker push k3d-registry.localhost:5000/alpine:t11741 2>&1 | tail -2
+          echo "exit=${PIPESTATUS[0]} after $(( $(date +%s) - start ))s"
+
+      - name: Pin resolv.conf to 8.8.8.8, the resolver the customer's runners use
+        run: |
+          set -ux
+          sudo rm -f /etc/resolv.conf
+          printf 'nameserver 8.8.8.8\n' | sudo tee /etc/resolv.conf
+          sleep 6
+          cat /etc/resolv.conf
+          getent hosts k3d-registry.localhost || echo "glibc: not found, exit=$?"
+
+      - name: A2. Shipped config, 8.8.8.8, no hosts entry
         run: |
           set +e
           cat /etc/resolv.conf; grep k3d-registry /etc/hosts || echo "no hosts entry"
-          docker info | grep -i proxy
           start=$(date +%s)
           docker push k3d-registry.localhost:5000/alpine:t11741 2>&1 | tail -2
           echo "exit=${PIPESTATUS[0]} after $(( $(date +%s) - start ))s"
