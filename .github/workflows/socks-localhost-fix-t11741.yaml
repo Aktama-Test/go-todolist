@@ -13,27 +13,34 @@ jobs:
             && echo "  <- EC2" || echo "no IMDS, so Metal"
           echo "## agentd"; sudo journalctl -u agentd -o cat --no-pager | grep -m1 -i 'version' || true
           echo "## resolv.conf"; cat /etc/resolv.conf
+          echo "## pre-tailscale backup"; sudo cat /etc/resolv.pre-tailscale-backup.conf 2>&1 || true
+          echo "## resolved / tailscaled"; systemctl is-active systemd-resolved tailscaled || true
           echo "## nsswitch hosts"; grep '^hosts:' /etc/nsswitch.conf
           echo "## hosts"; cat /etc/hosts
           echo "## daemon.json as shipped"; sudo cat /etc/docker/daemon.json; echo
           echo "## docker info"; docker info 2>/dev/null | grep -iE 'proxy|Server Version'
 
-      - name: Pin resolv.conf to 8.8.8.8 like the customer's runners
+      - name: Stop Tailscale so resolv.conf stays put, then pin it to 8.8.8.8
         run: |
-          set -euxo pipefail
-          sudo rm -f /etc/resolv.conf
+          set -ux
+          sudo tailscale down || true
+          sudo systemctl stop tailscaled || true
+          sleep 3
+          echo "## native resolv.conf after tailscale down"; cat /etc/resolv.conf
           printf 'nameserver 8.8.8.8\n' | sudo tee /etc/resolv.conf
-          sudo chattr +i /etc/resolv.conf
           sleep 6
-          cat /etc/resolv.conf
+          echo "## resolv.conf now"; cat /etc/resolv.conf
           getent hosts k3d-registry.localhost || echo "glibc: not found, exit=$?"
+          curl -sS --max-time 10 -o /dev/null -w 'github reachable: %{http_code}\n' https://api.github.com/
 
       - name: Registry, with plain HTTP allowed and the shipped proxies block kept
         run: |
           set -euxo pipefail
           sudo jq '.["insecure-registries"] = ["k3d-registry.localhost:5000"]' /etc/docker/daemon.json | sudo tee /tmp/shipped.json >/dev/null
           sudo cp /tmp/shipped.json /etc/docker/daemon.json
-          sudo systemctl restart docker; sleep 10
+          sudo systemctl reset-failed docker.service || true
+          sudo systemctl restart docker || sudo journalctl -xeu docker.service --no-pager | tail -20
+          sleep 10
           docker run -d --name reg -p 127.0.0.1:5000:5000 registry:2
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:5000/v2/ >/dev/null && break; sleep 1; done
           docker pull alpine:3.20
@@ -44,20 +51,24 @@ jobs:
           set +e
           cat /etc/resolv.conf; grep k3d-registry /etc/hosts || echo "no hosts entry"
           docker info | grep -i proxy
-          time docker push k3d-registry.localhost:5000/alpine:t11741 2>&1 | tail -2
-          echo "exit=${PIPESTATUS[0]}"
+          start=$(date +%s)
+          docker push k3d-registry.localhost:5000/alpine:t11741 2>&1 | tail -2
+          echo "exit=${PIPESTATUS[0]} after $(( $(date +%s) - start ))s"
 
       - name: B. Add no-proxy localhost as v1.93.4 writes it, 8.8.8.8, no hosts entry
         run: |
           set +e
           sudo jq '.proxies["no-proxy"] = "localhost"' /tmp/shipped.json | sudo tee /tmp/fix.json >/dev/null
           sudo cp /tmp/fix.json /etc/docker/daemon.json
-          sudo systemctl restart docker; sleep 10
+          sudo systemctl reset-failed docker.service
+          sudo systemctl restart docker || sudo journalctl -xeu docker.service --no-pager | tail -20
+          sleep 10
           docker start reg; for i in $(seq 1 30); do curl -sf http://127.0.0.1:5000/v2/ >/dev/null && break; sleep 1; done
           cat /etc/resolv.conf; grep k3d-registry /etc/hosts || echo "no hosts entry"
           docker info | grep -i proxy
-          time docker push k3d-registry.localhost:5000/alpine:t11741 2>&1 | tail -2
-          echo "exit=${PIPESTATUS[0]}"
+          start=$(date +%s)
+          docker push k3d-registry.localhost:5000/alpine:t11741 2>&1 | tail -2
+          echo "exit=${PIPESTATUS[0]} after $(( $(date +%s) - start ))s"
 
       - name: C. Same config, plus the hosts entry workaround
         run: |
