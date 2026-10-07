@@ -1,0 +1,49 @@
+name: Chrome/chromedriver version mismatch repro (T-12316)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  versions:
+    strategy:
+      fail-fast: false
+      matrix:
+        idx: [1, 2, 3, 4]
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: Runner identity
+        run: |
+          echo "runner=$RUNNER_NAME"
+          echo "hostname=$(hostname)"
+          echo "virt=$(systemd-detect-virt || true)"
+          echo "product=$(cat /sys/class/dmi/id/product_name 2>/dev/null || echo n/a)"
+          echo "cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2-)"
+          echo "imds=$(curl -s -m 2 http://169.254.169.254/latest/meta-data/instance-id || echo none)"
+          echo "archil_mounts=$(mount | grep -c archil || true)"
+          cat /imagegeneration/imagedata.json 2>/dev/null || echo "no imagedata.json"
+
+      - name: Chrome and chromedriver versions
+        run: |
+          echo "google-chrome: $(google-chrome --version)"
+          echo "/opt/google/chrome/chrome: $(/opt/google/chrome/chrome --version)"
+          echo "chromedriver (PATH): $(which chromedriver) -> $(chromedriver --version)"
+          echo "CHROMEWEBDRIVER=$CHROMEWEBDRIVER"
+          ls -la "$CHROMEWEBDRIVER" 2>/dev/null || true
+          echo "chromium: $(chromium --version 2>/dev/null || echo n/a)"
+
+      - name: Package provenance
+        run: |
+          dpkg -s google-chrome-stable | grep -E '^(Version|Installed-Size)'
+          echo "--- apt sources mentioning google"
+          ls -la /etc/apt/sources.list.d/ || true
+          grep -ril google /etc/apt/sources.list.d/ 2>/dev/null || echo "no google apt source"
+          echo "--- apt-cache policy"
+          apt-cache policy google-chrome-stable
+          echo "--- apt history (google-chrome / chromedriver lines)"
+          for f in /var/log/apt/history.log /var/log/apt/history.log.*.gz; do
+            [ -f "$f" ] || continue
+            echo "== $f"
+            if [[ "$f" == *.gz ]]; then zcat "$f"; else cat "$f"; fi | grep -E -B3 -A1 'google-chrome' || true
+          done
+          echo "--- dpkg log"
+          grep -h google-chrome /var/log/dpkg.log* 2>/dev/null | tail -20 || true
