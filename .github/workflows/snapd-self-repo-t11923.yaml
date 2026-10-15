@@ -13,7 +13,7 @@ jobs:
     steps:
       - name: Runner binary version
         run: |
-          listener=$(sudo find / -xdev -name Runner.Listener -path '*/bin/*' 2>/dev/null | head -1)
+          listener=$(ls -d /home/runner/runners/*/bin/Runner.Listener | head -1)
           echo "listener=$listener"
           "$listener" --version || true
           uname -r
