@@ -1,0 +1,41 @@
+name: Metal snapd and $/ syntax repro (T-11923)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  snapd:
+    strategy:
+      fail-fast: false
+      matrix:
+        runs-on: [depot-ubuntu-22.04, depot-ubuntu-24.04]
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - name: Runner binary version
+        run: |
+          listener=$(sudo find / -xdev -name Runner.Listener -path '*/bin/*' 2>/dev/null | head -1)
+          echo "listener=$listener"
+          "$listener" --version || true
+          uname -r
+          systemd-detect-virt || true
+
+      - name: snapd state
+        run: |
+          systemctl is-enabled snapd.service snapd.socket || true
+          systemctl is-active snapd.service snapd.socket || true
+          ls -l /run/snapd.socket || true
+
+      - name: snap install microceph
+        run: |
+          sudo snap install microceph
+          snap list microceph
+
+  # $/ fails while preparing actions, before any step runs, so it gets its own job.
+  self-repo:
+    strategy:
+      fail-fast: false
+      matrix:
+        runs-on: [depot-ubuntu-22.04, depot-ubuntu-24.04]
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: $/.github/actions/self-repo-probe
