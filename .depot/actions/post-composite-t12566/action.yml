@@ -1,0 +1,15 @@
+name: Post composite probe
+description: Composite action that calls a JavaScript action with a post step.
+
+inputs:
+  case:
+    description: Label printed by main and post
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: gacts/run-and-post-run@fc6503862aba998e2f2123225ad63c09a92ed46e
+      with:
+        run: echo REPRO-MAIN case=${{ inputs.case }}
+        post: echo REPRO-POST case=${{ inputs.case }}
