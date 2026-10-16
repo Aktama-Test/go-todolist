@@ -28,3 +28,6 @@ jobs:
       - uses: Aktama-Test/go-todolist/.depot/actions/post-composite-t12566@4f231784a62a422582349cbe724bbcf2134d91c0
         with:
           case: remote-composite
+
+  cross-repo-reusable:
+    uses: Aktama-Test/go-todolist/.depot/workflows/rw-called-t12566.yaml@38784df7dc9289d2de7b62e92a8806a3dd3e3815
