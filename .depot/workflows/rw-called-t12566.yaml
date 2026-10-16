@@ -1,0 +1,16 @@
+name: Composite post step called workflow (T-12566)
+
+on:
+  workflow_call:
+
+jobs:
+  called:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Aktama-Test/go-todolist
+          ref: t12566-reusable
+      - uses: ./.depot/actions/rw-composite-t12566
+        with:
+          case: cross-repo-reusable
