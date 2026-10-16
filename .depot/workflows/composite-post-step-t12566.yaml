@@ -33,4 +33,4 @@ jobs:
     uses: Aktama-Test/go-todolist/.depot/workflows/rw-called-t12566.yaml@38784df7dc9289d2de7b62e92a8806a3dd3e3815
 
   other-repo-reusable:
-    uses: Aktama-Test/private-action-lib/.depot/workflows/rw-called-t12566.yaml@00c46e65f375a13262dd88d027edeb9a00c885d7
+    uses: Aktama-Test/website/.depot/workflows/rw-called-t12566.yaml@a4fb9160f57a2cf4a451f0f2ad6d83ada61b3b14
