@@ -1,0 +1,30 @@
+name: Composite post step repro (T-12566)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  control:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gacts/run-and-post-run@fc6503862aba998e2f2123225ad63c09a92ed46e
+        with:
+          run: echo REPRO-MAIN case=control
+          post: echo REPRO-POST case=control
+
+  local-composite:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.depot/actions/post-composite-t12566
+        with:
+          case: local-composite
+
+  remote-composite:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Aktama-Test/go-todolist/.depot/actions/post-composite-t12566@4f231784a62a422582349cbe724bbcf2134d91c0
+        with:
+          case: remote-composite
