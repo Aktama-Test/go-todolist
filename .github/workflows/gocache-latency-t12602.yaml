@@ -1,0 +1,106 @@
+name: Go remote cache latency repro (T-12602)
+
+on:
+  workflow_dispatch:
+
+env:
+  PROM_REF: v3.5.0
+
+jobs:
+  seed:
+    runs-on: depot-ubuntu-24.04-arm-8
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - name: Clone workload
+        run: git clone --depth 1 --branch "$PROM_REF" https://github.com/prometheus/prometheus.git "$RUNNER_TEMP/prom"
+      - name: Download modules
+        working-directory: ${{ runner.temp }}/prom
+        run: go mod download
+      # depot gocache cancels outstanding PUTs 10s after close, so a second pass
+      # from an empty local dir uploads whatever the first pass dropped.
+      - name: Populate remote cache
+        working-directory: ${{ runner.temp }}/prom
+        env:
+          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+          GOCACHEPROG: depot gocache
+        run: |
+          for pass in 1 2; do
+            export GOCACHE="$RUNNER_TEMP/gocache-seed-$pass"
+            go build ./...
+            go test -count=1 -run '^$' ./... > /dev/null
+          done
+
+  measure:
+    needs: seed
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [depot-ubuntu-24.04-arm-4, depot-ubuntu-24.04-arm-8]
+        mode: [local, remote, remote-p16, remote-p32]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - name: Clone workload
+        run: git clone --depth 1 --branch "$PROM_REF" https://github.com/prometheus/prometheus.git "$RUNNER_TEMP/prom"
+      - name: Download modules
+        working-directory: ${{ runner.temp }}/prom
+        run: go mod download
+      - name: Measure
+        working-directory: ${{ runner.temp }}/prom
+        env:
+          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+          MODE: ${{ matrix.mode }}
+          RUNNER_LABEL: ${{ matrix.runner }}
+        run: |
+          set -euo pipefail
+          case "$MODE" in
+            remote-p16) export GOFLAGS=-p=16 ;;
+            remote-p32) export GOFLAGS=-p=32 ;;
+          esac
+          if [ "$MODE" != local ]; then
+            export GOCACHEPROG="depot gocache -v"
+          fi
+
+          timed() {
+            local label=$1; shift
+            local t0 t1
+            t0=$(date +%s.%N)
+            "$@" > /dev/null 2> "$RUNNER_TEMP/$label.err" || { cat "$RUNNER_TEMP/$label.err"; exit 1; }
+            t1=$(date +%s.%N)
+            awk -v l="$label" -v a="$t0" -v b="$t1" 'BEGIN { printf "%s %.1fs\n", l, b - a }' >> "$RUNNER_TEMP/times.txt"
+          }
+
+          # local: cold compile, then the same commands again against the warm local dir.
+          export GOCACHE="$RUNNER_TEMP/gocache-1"
+          timed build go build ./...
+          timed test-compile go test -count=1 -run '^$' ./...
+          if [ "$MODE" = local ]; then
+            timed build-warm go build ./...
+            timed test-compile-warm go test -count=1 -run '^$' ./...
+          fi
+
+          {
+            echo "### $RUNNER_LABEL / $MODE (nproc $(nproc), GOFLAGS=${GOFLAGS:-none})"
+            echo '```'
+            cat "$RUNNER_TEMP/times.txt"
+            for f in "$RUNNER_TEMP"/*.err; do
+              grep -h 'cacher: closing' "$f" || true
+              # Remote GET hits log "GET /gocache/v1/<id>: <n> bytes in <dur>".
+              grep -h 'GET /gocache/v1/.* bytes in ' "$f" | awk '
+                { d=$NF
+                  if (d ~ /µs$/) { sub(/µs$/,"",d); ms=d/1000 }
+                  else if (d ~ /ms$/) { sub(/ms$/,"",d); ms=d }
+                  else if (d ~ /s$/) { sub(/s$/,"",d); ms=d*1000 }
+                  print ms }' | sort -n | awk -v f="$(basename "$f" .err)" '
+                { v[NR]=$1; s+=$1 }
+                END { if (NR) printf "%s: %d remote hits, client p50 %.1fms p90 %.1fms p99 %.1fms, sum %.0fs\n", f, NR, v[int(NR*0.5)+1], v[int(NR*0.9)+1], v[int(NR*0.99)+1], s/1000 }'
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_STEP_SUMMARY"
