@@ -27,10 +27,14 @@ jobs:
           DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
           GOCACHEPROG: depot gocache
         run: |
-          for pass in 1 2; do
-            export GOCACHE="$RUNNER_TEMP/gocache-seed-$pass"
-            go build ./...
-            go test -count=1 -run '^$' ./... > /dev/null
+          # The measure jobs read through both the runner's local cache frontend
+          # and cache.depot.dev directly, so seed through each.
+          for host in "$DEPOT_CACHE_HOST" https://cache.depot.dev; do
+            for pass in 1 2; do
+              export GOCACHE="$RUNNER_TEMP/gocache-seed-$pass-${host//[^a-z0-9]/}"
+              DEPOT_CACHE_HOST="$host" go build ./...
+              DEPOT_CACHE_HOST="$host" go test -count=1 -run '^$' ./... > /dev/null
+            done
           done
 
   measure:
@@ -39,7 +43,7 @@ jobs:
       fail-fast: false
       matrix:
         runner: [depot-ubuntu-24.04-arm-4, depot-ubuntu-24.04-arm-8]
-        mode: [local, remote, remote-p16, remote-p32]
+        mode: [local, remote, remote-p16, remote-p32, direct, direct-p16, direct-p32]
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/setup-go@v5
@@ -60,8 +64,12 @@ jobs:
         run: |
           set -euo pipefail
           case "$MODE" in
-            remote-p16) export GOFLAGS=-p=16 ;;
-            remote-p32) export GOFLAGS=-p=32 ;;
+            *-p16) export GOFLAGS=-p=16 ;;
+            *-p32) export GOFLAGS=-p=32 ;;
+          esac
+          # direct matches an org with the automatic integration off.
+          case "$MODE" in
+            direct*) export DEPOT_CACHE_HOST=https://cache.depot.dev ;;
           esac
           if [ "$MODE" != local ]; then
             export GOCACHEPROG="depot gocache -v"
