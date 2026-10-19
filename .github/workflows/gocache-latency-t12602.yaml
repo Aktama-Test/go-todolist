@@ -88,6 +88,8 @@ jobs:
           {
             echo "### $RUNNER_LABEL / $MODE (nproc $(nproc), GOFLAGS=${GOFLAGS:-none})"
             echo '```'
+            echo "DEPOT_CACHE_HOST=${DEPOT_CACHE_HOST:-unset}"
+            getent hosts cache.depot.dev || true
             cat "$RUNNER_TEMP/times.txt"
             for f in "$RUNNER_TEMP"/*.err; do
               grep -h 'cacher: closing' "$f" || true
@@ -99,7 +101,7 @@ jobs:
                   else if (d ~ /s$/) { sub(/s$/,"",d); ms=d*1000 }
                   print ms }' | sort -n | awk -v f="$(basename "$f" .err)" '
                 { v[NR]=$1; s+=$1 }
-                END { if (NR) printf "%s: %d remote hits, client p50 %.1fms p90 %.1fms p99 %.1fms, sum %.0fs\n", f, NR, v[int(NR*0.5)+1], v[int(NR*0.9)+1], v[int(NR*0.99)+1], s/1000 }'
+                END { if (NR) printf "%s: %d remote hits, client p50 %.1fms p90 %.1fms p99 %.1fms, sum %.0fs\n", f, NR, v[int(NR*0.5)+1], v[int(NR*0.9)+1], v[int(NR*0.99)+1], s/1000 }' || true
             done
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
