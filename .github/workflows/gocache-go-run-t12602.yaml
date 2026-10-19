@@ -1,0 +1,61 @@
+name: Go remote cache go run repro (T-12602)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  go-run:
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.24.x', stable]
+        path: [integration, direct]
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - &setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: false
+      - &write-program
+        name: Write program
+        run: |
+          mkdir -p "$RUNNER_TEMP/genmodels" && cd "$RUNNER_TEMP/genmodels"
+          go mod init example.com/genmodels
+          # The run ID keeps cache keys unique to this run but shared across its jobs.
+          cat > main.go <<EOF
+          package main
+
+          import "fmt"
+
+          func main() { fmt.Println("gen-db-models ok ${{ github.run_id }} ${{ matrix.go }}") }
+          EOF
+      - &go-run
+        name: go run
+        working-directory: ${{ runner.temp }}/genmodels
+        env:
+          PATH_MODE: ${{ matrix.path }}
+          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+        run: |
+          if [ "$PATH_MODE" = direct ]; then
+            export GOCACHEPROG="depot gocache" DEPOT_CACHE_HOST=https://cache.depot.dev
+          fi
+          echo "GOCACHEPROG=${GOCACHEPROG:-unset} DEPOT_CACHE_HOST=${DEPOT_CACHE_HOST:-unset}"
+          go version
+          go run .
+          go run .
+
+  # Fresh runners, so the first go run gets the executable from the remote cache.
+  go-run-remote-hit:
+    needs: go-run
+    if: always()
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.24.x', stable]
+        path: [integration, direct]
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - *setup-go
+      - *write-program
+      - *go-run
