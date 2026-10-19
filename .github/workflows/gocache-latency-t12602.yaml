@@ -36,6 +36,17 @@ jobs:
               DEPOT_CACHE_HOST="$host" go test -count=1 -run '^$' ./... > /dev/null
             done
           done
+      - name: Populate go-build dir for actions/cache
+        working-directory: ${{ runner.temp }}/prom
+        run: |
+          # The runner injects GOCACHEPROG when the automatic integration is on.
+          unset GOCACHEPROG
+          go build ./...
+          go test -count=1 -run '^$' ./... > /dev/null
+      - uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/go-build
+          key: gocache-t12602-${{ github.run_id }}
 
   measure:
     needs: seed
@@ -43,7 +54,7 @@ jobs:
       fail-fast: false
       matrix:
         runner: [depot-ubuntu-24.04-arm-4, depot-ubuntu-24.04-arm-8]
-        mode: [local, remote, remote-p16, remote-p32, direct, direct-p16, direct-p32]
+        mode: [local, actions-cache, remote, direct]
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/setup-go@v5
@@ -55,6 +66,15 @@ jobs:
       - name: Download modules
         working-directory: ${{ runner.temp }}/prom
         run: go mod download
+      - name: Mark restore start
+        if: matrix.mode == 'actions-cache'
+        run: date +%s.%N > "$RUNNER_TEMP/restore-start"
+      - uses: actions/cache/restore@v4
+        if: matrix.mode == 'actions-cache'
+        with:
+          path: ~/.cache/go-build
+          key: gocache-t12602-${{ github.run_id }}
+          fail-on-cache-miss: true
       - name: Measure
         working-directory: ${{ runner.temp }}/prom
         env:
@@ -71,9 +91,10 @@ jobs:
           case "$MODE" in
             direct*) export DEPOT_CACHE_HOST=https://cache.depot.dev ;;
           esac
-          if [ "$MODE" != local ]; then
-            export GOCACHEPROG="depot gocache -v"
-          fi
+          case "$MODE" in
+            local|actions-cache) unset GOCACHEPROG ;;
+            *) export GOCACHEPROG="depot gocache -v" ;;
+          esac
 
           timed() {
             local label=$1; shift
@@ -84,8 +105,14 @@ jobs:
             awk -v l="$label" -v a="$t0" -v b="$t1" 'BEGIN { printf "%s %.1fs\n", l, b - a }' >> "$RUNNER_TEMP/times.txt"
           }
 
-          # local: cold compile, then the same commands again against the warm local dir.
-          export GOCACHE="$RUNNER_TEMP/gocache-1"
+          if [ -f "$RUNNER_TEMP/restore-start" ]; then
+            awk -v a="$(cat "$RUNNER_TEMP/restore-start")" -v b="$(date +%s.%N)" 'BEGIN { printf "actions-cache-restore %.1fs\n", b - a }' >> "$RUNNER_TEMP/times.txt"
+            du -sh ~/.cache/go-build >> "$RUNNER_TEMP/times.txt"
+            export GOCACHE="$HOME/.cache/go-build"
+          else
+            # local: cold compile, then the same commands again against the warm local dir.
+            export GOCACHE="$RUNNER_TEMP/gocache-1"
+          fi
           timed build go build ./...
           timed test-compile go test -count=1 -run '^$' ./...
           if [ "$MODE" = local ]; then
@@ -96,7 +123,7 @@ jobs:
           {
             echo "### $RUNNER_LABEL / $MODE (nproc $(nproc), GOFLAGS=${GOFLAGS:-none})"
             echo '```'
-            echo "DEPOT_CACHE_HOST=${DEPOT_CACHE_HOST:-unset}"
+            echo "GOCACHEPROG=${GOCACHEPROG:-unset} DEPOT_CACHE_HOST=${DEPOT_CACHE_HOST:-unset}"
             getent hosts cache.depot.dev || true
             cat "$RUNNER_TEMP/times.txt"
             for f in "$RUNNER_TEMP"/*.err; do
