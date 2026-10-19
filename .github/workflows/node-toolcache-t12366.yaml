@@ -1,0 +1,25 @@
+name: Node 24.21.0 toolcache repro (T-12366)
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [depot-ubuntu-24.04, depot-ubuntu-22.04]
+    name: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Recon
+        run: |
+          echo "runner=$RUNNER_NAME"
+          if curl -sf --max-time 1 http://169.254.169.254/latest/meta-data/instance-id >/dev/null; then echo "compute=EC2"; else echo "compute=Metal"; fi
+          grep -E '^(ImageVersion|ImageOS)=' /etc/environment || true
+          cat /imagegeneration/imagedata.json 2>/dev/null || true
+      - name: List Node toolcache
+        run: ls -1 /opt/hostedtoolcache/node || echo "no node toolcache"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+      - run: node --version
