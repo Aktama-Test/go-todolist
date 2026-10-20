@@ -1,0 +1,29 @@
+name: "$/ action reference repro (T-11931)"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  # The path Carrot hit: a third-party composite whose internal steps use $/
+  # (install/ampel -> $/install/download-and-verify -> $/install/ampel-bootstrap).
+  # v1.3.0 is the first release after carabiner switched to $/ on 2026-09-09.
+  third-party-nested:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - uses: carabiner-dev/actions/install/ampel@v1.3.0
+      - run: |
+          which ampel
+          ampel version
+
+  # Workflow-level $/ resolved against this repository at the run's SHA.
+  workflow-level:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - uses: $/.github/actions/self-repo-probe
+
+  # A local composite whose own step references a sibling action with $/.
+  nested-local:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/self-repo-outer
