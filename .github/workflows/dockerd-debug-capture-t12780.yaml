@@ -3,6 +3,10 @@ name: dockerd debug capture repro (T-12780)
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
+
 env:
   DEPOT_PROJECT: 2mtnv574xd
   SAVE_TAG: t12780
@@ -34,8 +38,6 @@ jobs:
           echo "daemon.json now:"; sudo cat /etc/docker/daemon.json
 
       - name: Save a small image for depot pull
-        env:
-          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
         run: depot build --save --save-tag "$SAVE_TAG" --project "$DEPOT_PROJECT" --platform linux/amd64 -f Dockerfile.t11842 .
 
       - name: Capture during an in-flight pull
@@ -60,8 +62,6 @@ jobs:
           echo "::endgroup::"
 
       - name: depot pull shows up in the daemon log
-        env:
-          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
         run: |
           depot pull --progress plain --project "$DEPOT_PROJECT" --tag "local-$SAVE_TAG" "$SAVE_TAG"
           { sudo cat /var/log/docker.log 2>/dev/null || sudo journalctl -u docker --since "-10 min" --no-pager; } > /tmp/dockerd.txt
