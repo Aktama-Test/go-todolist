@@ -1,0 +1,70 @@
+name: dockerd debug capture repro (T-12780)
+
+on:
+  workflow_dispatch:
+
+env:
+  DEPOT_PROJECT: 2mtnv574xd
+  SAVE_TAG: t12780
+  BIG_IMAGE: public.ecr.aws/docker/library/python:3.12
+
+jobs:
+  capture:
+    runs-on: depot-ubuntu-24.04-4
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: depot/use-action@v1.3.1
+
+      - name: Environment
+        run: |
+          echo "pid1=$(ps -o comm= -p 1) docker=$(docker version --format '{{.Server.Version}}')"
+          echo "daemon.json:"; sudo cat /etc/docker/daemon.json
+          ls -l /var/log/docker.log 2>&1 || true
+          echo "debug before: $(docker info --format '{{.Debug}}')"
+
+      # Copied verbatim from the customer draft.
+      - name: Enable dockerd debug
+        run: |
+          sudo jq '. + {"debug": true}' /etc/docker/daemon.json > /tmp/daemon.json
+          sudo mv /tmp/daemon.json /etc/docker/daemon.json
+          sudo kill -HUP "$(pidof dockerd)"
+          sleep 2
+          echo "debug after: $(docker info --format '{{.Debug}}')"
+          echo "daemon.json now:"; sudo cat /etc/docker/daemon.json
+
+      - name: Save a small image for depot pull
+        env:
+          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+        run: depot build --save --save-tag "$SAVE_TAG" --project "$DEPOT_PROJECT" --platform linux/amd64 -f Dockerfile.t11842 .
+
+      - name: Capture during an in-flight pull
+        run: |
+          docker pull "$BIG_IMAGE" > /tmp/bigpull.txt 2>&1 &
+          bg=$!
+          sleep 4
+          echo "pull still running: $(kill -0 $bg 2>/dev/null && echo yes || echo no)"
+
+          # Copied verbatim from the customer draft.
+          sudo kill -USR1 "$(pidof dockerd)"
+          sleep 2
+          sudo tail -n 500 /var/log/docker.log 2>/dev/null || sudo journalctl -u docker --since "-5 min" --no-pager
+          sudo sh -c 'cat /var/run/docker/goroutine-stacks-*.log' > /tmp/stacks.txt
+
+          wait $bg || true
+          echo "::group::checks"
+          echo "stack dump files: $(sudo sh -c 'ls /var/run/docker/goroutine-stacks-*.log' 2>&1)"
+          echo "stack dump lines: $(wc -l < /tmp/stacks.txt)"
+          echo "pull-related goroutines: $(grep -c -E 'distribution|xfer|pullEndpoints|PullImage' /tmp/stacks.txt)"
+          grep -m5 -E 'distribution/|xfer\.' /tmp/stacks.txt || true
+          echo "::endgroup::"
+
+      - name: depot pull shows up in the daemon log
+        env:
+          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+        run: |
+          depot pull --progress plain --project "$DEPOT_PROJECT" --tag "local-$SAVE_TAG" "$SAVE_TAG"
+          { sudo cat /var/log/docker.log 2>/dev/null || sudo journalctl -u docker --since "-10 min" --no-pager; } > /tmp/dockerd.txt
+          echo "debug lines: $(grep -c 'level=debug' /tmp/dockerd.txt)"
+          echo "registry.depot.dev lines: $(grep -c 'registry.depot.dev' /tmp/dockerd.txt)"
+          grep -m8 'registry.depot.dev' /tmp/dockerd.txt | cut -c1-300
