@@ -1,0 +1,12 @@
+name: Cancel before runner start repro (T-12950)
+on:
+  workflow_dispatch:
+    inputs:
+      runs-on:
+        description: Runner label
+        default: depot-ubuntu-24.04-4
+jobs:
+  sleep:
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - run: sleep 600
