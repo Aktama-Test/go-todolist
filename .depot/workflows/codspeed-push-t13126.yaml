@@ -13,3 +13,15 @@ jobs:
         with:
           mode: simulation
           run: echo REPRO case=codspeed-patched-local-push-sim step=benchmark
+
+  valgrind-download:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - shell: bash
+        run: |
+          URL=https://github.com/CodSpeedHQ/valgrind-codspeed/releases/download/3.26.0-0codspeed10/valgrind_3.26.0-0codspeed10_ubuntu-24.04_amd64.deb
+          for flag in "" -4 -6; do
+            echo "REPRO curl flag='${flag}'"
+            curl $flag -fsSL -o /tmp/valgrind.deb -w "REPRO http=%{http_code} ip=%{remote_ip} bytes=%{size_download} host=%{url_effective}\n" --max-time 60 "$URL" 2>&1 | sed 's/?.*//' || echo "REPRO curl flag='${flag}' exit=$?"
+          done
+          env | grep -i proxy || echo "REPRO no proxy env"
