@@ -26,3 +26,11 @@ jobs:
         with:
           mode: walltime
           run: echo REPRO case=codspeed step=benchmark
+
+  codspeed-patched:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - uses: Aktama-Test/go-todolist/.github/actions/codspeed-patched-t13126@6498284541b1563412c5e2ce40ff1b814e992349
+        with:
+          mode: walltime
+          run: echo REPRO case=codspeed-patched step=benchmark
