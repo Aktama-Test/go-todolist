@@ -34,3 +34,11 @@ jobs:
         with:
           mode: walltime
           run: echo REPRO case=codspeed-patched step=benchmark
+
+  codspeed-simulation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: CodSpeedHQ/action@78102a468f96d8e0ccb92d0ec49425753fc42062
+        with:
+          mode: simulation
+          run: echo REPRO case=codspeed-simulation-gha step=benchmark
