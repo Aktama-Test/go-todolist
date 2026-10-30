@@ -27,8 +27,12 @@ jobs:
         run: |
           command -v strace || sudo apt-get install -y -qq strace
           which codspeed
-          strace -f -o /tmp/codspeed.strace codspeed run --mode simulation -- pytest bench-t13126 --codspeed 2>&1 | tail -30 | sed 's/^/REPRO out /' || true
-          echo "REPRO --- failing network syscalls"
-          grep -E "connect\(|sendto\(|socket\(" /tmp/codspeed.strace | grep -v -E "= 0$|EINPROGRESS|ENOENT" | head -30 | sed 's/^/REPRO strace /'
-          echo "REPRO --- DNS and 443 connects"
-          grep -E "htons\(53\)|htons\(443\)" /tmp/codspeed.strace | head -30 | sed 's/^/REPRO strace /'
+          strace -f -e trace=network,poll,ppoll,epoll_wait,close -o /tmp/codspeed.strace timeout 60 codspeed run --mode simulation -- pytest bench-t13126 --codspeed > /dev/null 2>&1 || true
+          echo "REPRO --- first DNS socket lifecycle"
+          fd=$(grep -m1 -E "socket\(AF_INET, SOCK_DGRAM" /tmp/codspeed.strace | sed -E 's/.*= ([0-9]+)$/\1/')
+          pid=$(grep -m1 -E "socket\(AF_INET, SOCK_DGRAM" /tmp/codspeed.strace | awk '{print $1}')
+          echo "REPRO fd=$fd pid=$pid"
+          awk -v p="$pid" '$1==p' /tmp/codspeed.strace | grep -n -A25 -m1 "socket(AF_INET, SOCK_DGRAM" | head -40 | sed 's/^/REPRO strace /'
+          echo "REPRO --- any sends to port 53"
+          grep -E "htons\(53\)" /tmp/codspeed.strace | head -5 | sed 's/^/REPRO strace /'
+          sed 's/^/REPRO hosts /' /etc/hosts
