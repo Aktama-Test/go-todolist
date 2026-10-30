@@ -1,4 +1,4 @@
-name: CodSpeed runner strace on push repro (T-13126)
+name: Patched CodSpeed without Tailscale repro (T-13126)
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   id-token: write
 
 jobs:
-  codspeed-plain-step:
+  codspeed-patched-no-tailscale:
     runs-on: depot-ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,22 +17,18 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pytest pytest-codspeed
-      - name: Install CodSpeed runner 5.6.0
+      - name: Stop Tailscale and reset DNS
         run: |
-          curl -fsSL https://codspeed.io/v5.6.0/install.sh | bash -s -- --quiet
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - name: codspeed run under strace
-        env:
-          CODSPEED_LOG: debug
-        run: |
-          command -v strace || sudo apt-get install -y -qq strace
-          which codspeed
-          strace -f -e trace=network,poll,ppoll,epoll_wait,close -o /tmp/codspeed.strace timeout 60 codspeed run --mode simulation -- pytest bench-t13126 --codspeed > /dev/null 2>&1 || true
-          echo "REPRO --- first DNS socket lifecycle"
-          fd=$(grep -m1 -E "socket\(AF_INET, SOCK_DGRAM" /tmp/codspeed.strace | sed -E 's/.*= ([0-9]+)$/\1/')
-          pid=$(grep -m1 -E "socket\(AF_INET, SOCK_DGRAM" /tmp/codspeed.strace | awk '{print $1}')
-          echo "REPRO fd=$fd pid=$pid"
-          awk -v p="$pid" '$1==p' /tmp/codspeed.strace | grep -n -A25 -m1 "socket(AF_INET, SOCK_DGRAM" | head -40 | sed 's/^/REPRO strace /'
-          echo "REPRO --- any sends to port 53"
-          grep -E "htons\(53\)" /tmp/codspeed.strace | head -5 | sed 's/^/REPRO strace /'
-          sed 's/^/REPRO hosts /' /etc/hosts
+          sed 's/^/REPRO before resolv.conf /' /etc/resolv.conf
+          sudo pkill -f tailscaled || echo "REPRO no tailscaled running"
+          sleep 2
+          printf 'nameserver 8.8.8.8\nnameserver 9.9.9.9\n' | sudo tee /etc/resolv.conf >/dev/null
+          sed 's/^/REPRO after resolv.conf /' /etc/resolv.conf
+          pgrep -a tailscaled | sed 's/^/REPRO still running /' || echo "REPRO tailscaled stopped"
+      - uses: ./.depot/actions/codspeed-patched-t13126
+        with:
+          mode: simulation
+          run: pytest bench-t13126 --codspeed
+      - name: DNS after CodSpeed
+        if: always()
+        run: sed 's/^/REPRO end resolv.conf /' /etc/resolv.conf
