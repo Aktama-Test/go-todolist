@@ -13,15 +13,20 @@ jobs:
         with:
           mode: simulation
           run: echo REPRO case=codspeed-patched-local-push-sim step=benchmark
+        env:
+          CODSPEED_LOG: trace
 
-  valgrind-download:
+  tls-probe:
     runs-on: depot-ubuntu-latest
     steps:
       - shell: bash
         run: |
-          URL=https://github.com/CodSpeedHQ/valgrind-codspeed/releases/download/3.26.0-0codspeed10/valgrind_3.26.0-0codspeed10_ubuntu-24.04_amd64.deb
-          for flag in "" -4 -6; do
-            echo "REPRO curl flag='${flag}'"
-            curl $flag -fsSL -o /tmp/valgrind.deb -w "REPRO http=%{http_code} ip=%{remote_ip} bytes=%{size_download} host=%{url_effective}\n" --max-time 60 "$URL" 2>&1 | sed 's/?.*//' || echo "REPRO curl flag='${flag}' exit=$?"
+          for h in github.com release-assets.githubusercontent.com; do
+            echo "REPRO host=$h"
+            echo | openssl s_client -connect $h:443 -servername $h -showcerts 2>/dev/null | grep -E "^ *[0-9] s:|^ *i:" | sed 's/^/REPRO   /'
           done
-          env | grep -i proxy || echo "REPRO no proxy env"
+          env | grep -i -E "ssl|cert|^ca_|curl_ca" | sed 's/^/REPRO env /' || echo "REPRO no ssl/cert env"
+          ls -la /usr/local/share/ca-certificates/ 2>&1 | sed 's/^/REPRO ca-dir /'
+          ls -la /etc/ssl/certs/ca-certificates.crt | sed 's/^/REPRO bundle /'
+          cat /etc/resolv.conf | sed 's/^/REPRO resolv /'
+          getent ahosts github.com | head -4 | sed 's/^/REPRO getent /'
