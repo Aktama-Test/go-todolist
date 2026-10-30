@@ -1,4 +1,4 @@
-name: reqwest probe on push repro (T-13126)
+name: reqwest musl probe on push repro (T-13126)
 
 on:
   push:
@@ -9,19 +9,31 @@ jobs:
     runs-on: depot-ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build probe
+      - name: Resolver config
+        run: |
+          sed 's/^/REPRO resolv.conf /' /etc/resolv.conf
+          grep hosts /etc/nsswitch.conf | sed 's/^/REPRO nsswitch /'
+          ls -la /etc/resolv.conf | sed 's/^/REPRO /'
+          for ns in 8.8.8.8 9.9.9.9 100.100.100.100; do
+            if timeout 5 bash -c "exec 3<>/dev/udp/$ns/53" 2>/dev/null; then :; fi
+            r=$(dig +time=3 +tries=1 @$ns github.com A +short 2>&1 | head -1)
+            echo "REPRO dig @$ns -> ${r:-<empty>}"
+          done
+      - name: Build probes
         working-directory: reqwest-probe-t13126
         run: |
-          cargo --version || { curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal; . "$HOME/.cargo/env"; }
+          command -v musl-gcc || sudo apt-get install -y -qq musl-tools
+          rustup target add x86_64-unknown-linux-musl
           cargo build --release -q
-      - name: Run probe
+          cargo build --release -q --target x86_64-unknown-linux-musl
+      - name: Run probes
         working-directory: reqwest-probe-t13126
         run: |
-          URLS="https://github.com/CodSpeedHQ/valgrind-codspeed/releases/download/3.26.0-0codspeed10/valgrind_3.26.0-0codspeed10_ubuntu-24.04_amd64.deb https://api.codspeed.io/upload https://gql.codspeed.io/ https://example.com/"
-          ./target/release/reqwest-probe $URLS
-          for u in $URLS; do curl -sS -o /dev/null -w "REPRO curl url=$u http=%{http_code} ip=%{remote_ip}\n" --max-time 30 "$u" || echo "REPRO curl url=$u failed"; done
-      - name: Run probe under strace
-        working-directory: reqwest-probe-t13126
-        run: |
+          URL=https://api.codspeed.io/upload
+          echo "REPRO --- glibc"
+          ./target/release/reqwest-probe $URL
+          echo "REPRO --- musl"
+          ./target/x86_64-unknown-linux-musl/release/reqwest-probe $URL
+          echo "REPRO --- musl strace"
           command -v strace || sudo apt-get install -y -qq strace
-          strace -f -e trace=network,connect -s 128 ./target/release/reqwest-probe https://api.codspeed.io/upload 2>&1 | tail -60 | sed 's/^/REPRO strace /'
+          strace -f -e trace=connect,sendto,recvfrom -s 64 ./target/x86_64-unknown-linux-musl/release/reqwest-probe $URL 2>&1 | grep -E "connect|sendto|recvfrom" | head -20 | sed 's/^/REPRO strace /'
