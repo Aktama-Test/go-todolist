@@ -1,0 +1,28 @@
+name: Nested JS action GITHUB_ACTION_PATH repro (T-13126)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  remote-composite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Aktama-Test/go-todolist/.github/actions/action-path-probe-t13126@0032a422558965fb055b72e1512345751a9172d5
+        with:
+          case: remote-composite
+
+  local-composite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/action-path-probe-t13126
+        with:
+          case: local-composite
+
+  codspeed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: CodSpeedHQ/action@78102a468f96d8e0ccb92d0ec49425753fc42062
+        with:
+          mode: walltime
+          run: echo REPRO case=codspeed step=benchmark
