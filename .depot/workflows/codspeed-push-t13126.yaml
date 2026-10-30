@@ -4,29 +4,26 @@ on:
   push:
     branches: [t13126-push]
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
-  codspeed-patched-local:
+  codspeed-preinstall-patched:
     runs-on: depot-ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest pytest-codspeed
+      - name: Pre-install valgrind-codspeed
+        run: |
+          curl -fsSL -o /tmp/valgrind-codspeed.deb https://github.com/CodSpeedHQ/valgrind-codspeed/releases/download/3.26.0-0codspeed10/valgrind_3.26.0-0codspeed10_ubuntu-24.04_amd64.deb
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq /tmp/valgrind-codspeed.deb libc6-dbg
+          valgrind --version
       - uses: ./.depot/actions/codspeed-patched-t13126
         with:
           mode: simulation
-          run: echo REPRO case=codspeed-patched-local-push-sim step=benchmark
-        env:
-          CODSPEED_LOG: trace
-
-  tls-probe:
-    runs-on: depot-ubuntu-latest
-    steps:
-      - shell: bash
-        run: |
-          for h in github.com release-assets.githubusercontent.com; do
-            echo "REPRO host=$h"
-            echo | openssl s_client -connect $h:443 -servername $h -showcerts 2>/dev/null | grep -E "^ *[0-9] s:|^ *i:" | sed 's/^/REPRO   /'
-          done
-          env | grep -i -E "ssl|cert|^ca_|curl_ca" | sed 's/^/REPRO env /' || echo "REPRO no ssl/cert env"
-          ls -la /usr/local/share/ca-certificates/ 2>&1 | sed 's/^/REPRO ca-dir /'
-          ls -la /etc/ssl/certs/ca-certificates.crt | sed 's/^/REPRO bundle /'
-          cat /etc/resolv.conf | sed 's/^/REPRO resolv /'
-          getent ahosts github.com | head -4 | sed 's/^/REPRO getent /'
+          run: pytest bench-t13126 --codspeed

@@ -1,0 +1,22 @@
+name: CodSpeed simulation control repro (T-13126)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  codspeed-simulation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest pytest-codspeed
+      - uses: CodSpeedHQ/action@78102a468f96d8e0ccb92d0ec49425753fc42062
+        with:
+          mode: simulation
+          run: pytest bench-t13126 --codspeed
