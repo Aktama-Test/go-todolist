@@ -1,0 +1,15 @@
+name: Patched CodSpeed on push repro (T-13126)
+
+on:
+  push:
+    branches: [t13126-push]
+
+jobs:
+  codspeed-patched-local:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.depot/actions/codspeed-patched-t13126
+        with:
+          mode: walltime
+          run: echo REPRO case=codspeed-patched-local-push step=benchmark
