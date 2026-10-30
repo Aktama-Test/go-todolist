@@ -34,3 +34,12 @@ jobs:
         with:
           mode: walltime
           run: echo REPRO case=codspeed-patched step=benchmark
+
+  codspeed-patched-local:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.depot/actions/codspeed-patched-t13126
+        with:
+          mode: walltime
+          run: echo REPRO case=codspeed-patched-local step=benchmark
