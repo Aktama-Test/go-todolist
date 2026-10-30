@@ -11,5 +11,5 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.depot/actions/codspeed-patched-t13126
         with:
-          mode: walltime
-          run: echo REPRO case=codspeed-patched-local-push step=benchmark
+          mode: simulation
+          run: echo REPRO case=codspeed-patched-local-push-sim step=benchmark
