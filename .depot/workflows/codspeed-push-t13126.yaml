@@ -1,4 +1,4 @@
-name: Patched CodSpeed without Tailscale repro (T-13126)
+name: CodSpeed CLI without action repro (T-13126)
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   id-token: write
 
 jobs:
-  codspeed-patched-no-tailscale:
+  codspeed-cli-no-tailscale:
     runs-on: depot-ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,16 +19,13 @@ jobs:
       - run: pip install pytest pytest-codspeed
       - name: Stop Tailscale and reset DNS
         run: |
-          sed 's/^/REPRO before resolv.conf /' /etc/resolv.conf
-          sudo pkill -f tailscaled || echo "REPRO no tailscaled running"
+          sudo pkill -f tailscaled || true
           sleep 2
           printf 'nameserver 8.8.8.8\nnameserver 9.9.9.9\n' | sudo tee /etc/resolv.conf >/dev/null
-          sed 's/^/REPRO after resolv.conf /' /etc/resolv.conf
-          pgrep -a tailscaled | sed 's/^/REPRO still running /' || echo "REPRO tailscaled stopped"
-      - uses: ./.depot/actions/codspeed-patched-t13126
-        with:
-          mode: simulation
-          run: pytest bench-t13126 --codspeed
-      - name: DNS after CodSpeed
-        if: always()
-        run: sed 's/^/REPRO end resolv.conf /' /etc/resolv.conf
+          sed 's/^/REPRO resolv.conf /' /etc/resolv.conf
+      - name: Run CodSpeed CLI directly
+        run: |
+          curl -fsSL https://codspeed.io/v5.6.0/install.sh | bash -s -- --quiet
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "REPRO codspeed=$(command -v codspeed)"
+          codspeed run --mode simulation -- pytest bench-t13126 --codspeed
