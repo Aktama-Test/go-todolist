@@ -1,0 +1,22 @@
+name: GITHUB_ACTION_PATH probe (T-13126)
+description: Reads its own files through GITHUB_ACTION_PATH from a bash step and a nested JavaScript step
+inputs:
+  case:
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Bash step
+      shell: bash
+      run: |
+        echo "REPRO case=${{ inputs.case }} step=bash GITHUB_ACTION_PATH=$GITHUB_ACTION_PATH github.action_path=${{ github.action_path }}"
+        echo "REPRO case=${{ inputs.case }} step=bash marker=$(cat "$GITHUB_ACTION_PATH/.probe-marker")"
+
+    - name: Nested github-script step
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+      with:
+        script: |
+          const actionPath = process.env.GITHUB_ACTION_PATH
+          console.log(`REPRO case=${{ inputs.case }} step=github-script GITHUB_ACTION_PATH=${actionPath}`)
+          const data = require(`${actionPath}/.probe-data.json`)
+          console.log(`REPRO case=${{ inputs.case }} step=github-script data=${data.marker}`)
