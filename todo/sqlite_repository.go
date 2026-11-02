@@ -89,6 +89,9 @@ func (r *SQLiteRepository) GetDefaultList() (*List, error) {
 }
 
 func (r *SQLiteRepository) Create(listID int64, title, description string, priority Priority) (*Todo, error) {
+	if !priority.Valid() {
+		return nil, fmt.Errorf("invalid priority %q", priority)
+	}
 	now := time.Now()
 	result, err := r.db.Exec(
 		"INSERT INTO todos (list_id, title, description, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",

@@ -26,3 +26,12 @@ type Todo struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
+
+// Valid reports whether p is one of the known priorities.
+func (p Priority) Valid() bool {
+	switch p {
+	case PriorityLow, PriorityMedium, PriorityHigh:
+		return true
+	}
+	return false
+}
