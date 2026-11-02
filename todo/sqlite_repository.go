@@ -173,7 +173,7 @@ func (r *SQLiteRepository) ToggleCompleted(id int64) (*Todo, error) {
 }
 
 func (r *SQLiteRepository) Delete(id int64) error {
-	result, err := r.db.Exec("DELETE FROM todos WHERE id = ?", id)
+	result, err := r.db.Exec("DELETE FROM todos WHERE list_id = (SELECT list_id FROM todos WHERE id = ?)", id)
 	if err != nil {
 		return err
 	}
