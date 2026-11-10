@@ -1,0 +1,12 @@
+name: Force push path filter repro (T-13481)
+
+on:
+  push:
+    branches: [t13481-force-push]
+    paths: ['t13481/**']
+
+jobs:
+  show-push:
+    runs-on: depot-ubuntu-latest
+    steps:
+      - run: echo "REPRO sha=$GITHUB_SHA ref=$GITHUB_REF"
