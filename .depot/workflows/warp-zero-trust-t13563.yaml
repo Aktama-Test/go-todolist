@@ -1,0 +1,74 @@
+name: Cloudflare WARP on Depot CI repro (T-13563)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  # Consumer registration only: no Zero Trust org, so this proves the client
+  # starts and tunnels, not access to private resources.
+  warp:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Guest prerequisites
+        run: |
+          echo "=== pid 1 ==="; ps -o pid,comm -p 1
+          echo "=== systemctl ==="; systemctl is-system-running 2>&1 || true
+          echo "=== /dev/net/tun ==="; ls -l /dev/net/tun || echo "no tun device"
+          echo "=== os ==="; . /etc/os-release; echo "$PRETTY_NAME"
+
+      - name: Install cloudflare-warp
+        run: |
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cloudflare-warp
+          warp-cli --version
+
+      - name: Does warp-svc start on its own
+        run: |
+          sleep 3
+          pgrep -a warp-svc || echo "warp-svc NOT running after install"
+          warp-cli --accept-tos status 2>&1 || true
+
+      - name: Start warp-svc by hand if needed
+        run: |
+          if ! pgrep warp-svc >/dev/null; then
+            sudo sh -c 'nohup warp-svc >/tmp/warp-svc.log 2>&1 &'
+          fi
+          for _ in $(seq 1 30); do warp-cli --accept-tos status >/dev/null 2>&1 && break; sleep 1; done
+          pgrep -a warp-svc || { echo "warp-svc failed to start"; cat /tmp/warp-svc.log; exit 1; }
+
+      - name: Register and connect
+        run: |
+          warp-cli --accept-tos registration new
+          warp-cli --accept-tos connect
+          for i in $(seq 1 60); do
+            s=$(warp-cli --accept-tos status 2>&1)
+            echo "$s" | grep -q "Connected" && { echo "connected after ${i}s"; break; }
+            sleep 1
+          done
+          warp-cli --accept-tos status
+          ip -br addr show | grep -i -E "warp|tun" || echo "no WARP interface"
+
+      - name: Traffic while connected
+        run: |
+          echo "=== cloudflare trace ==="; curl -s https://www.cloudflare.com/cdn-cgi/trace | grep -E "warp|ip="
+          echo "=== github ==="; curl -s -o /dev/null -w "%{http_code}\n" https://api.github.com
+          echo "=== depot api ==="; curl -s -o /dev/null -w "%{http_code}\n" https://api.depot.dev
+          echo "=== dns ==="; getent hosts registry.npmjs.org
+
+      # If the worker lost its connection to Depot when WARP took over routing,
+      # these steps never report.
+      - name: Worker still reporting after 60s connected
+        run: |
+          sleep 60
+          warp-cli --accept-tos status
+          echo "worker alive at $(date -u +%H:%M:%S)"
+
+      - name: Disconnect and clean up
+        if: always()
+        run: |
+          warp-cli --accept-tos disconnect 2>&1 || true
+          warp-cli --accept-tos registration delete 2>&1 || true
+          [ -f /tmp/warp-svc.log ] && tail -20 /tmp/warp-svc.log || true
