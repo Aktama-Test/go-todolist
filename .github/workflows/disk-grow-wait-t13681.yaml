@@ -1,0 +1,40 @@
+name: Root disk grow wait repro (T-13681)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  grow-wait:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: depot-ubuntu-24.04-32
+    steps:
+      - name: Root size at job start
+        run: df -BG /
+
+      - name: Wait for root disk to grow
+        timeout-minutes: 10
+        run: |
+          start=$(date +%s)
+          until [ "$(df -BG --output=size / | tail -1 | tr -dc 0-9)" -gt 100 ]; do sleep 5; done
+          echo "waited $(( $(date +%s) - start ))s"
+          df -BG /
+
+      - uses: actions/checkout@v4
+
+      - name: Write 40 GB
+        run: |
+          fallocate -l 40G "$RUNNER_TEMP/fill" || dd if=/dev/zero of="$RUNNER_TEMP/fill" bs=1M count=40960 status=none
+          df -BG /
+          rm -f "$RUNNER_TEMP/fill"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build and test
+        run: |
+          go build ./...
+          go test ./...
