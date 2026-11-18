@@ -1,0 +1,20 @@
+name: Cross-repo checkout ref repro (T-13787)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  checkout:
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: Checkout another repo at a pinned SHA
+        uses: actions/checkout@v4
+        with:
+          repository: android/testing-samples
+          ref: 8c9df3a534ef99e44d481d96c00a5fc1970f7c70
+
+      - name: Show checked-out commit
+        run: |
+          echo "GITHUB_SHA=$GITHUB_SHA"
+          git rev-parse HEAD
+          git remote get-url origin
