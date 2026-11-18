@@ -2,6 +2,9 @@ name: Cross-repo checkout ref repro (T-13787)
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - .depot/workflows/checkout-cross-repo-ref-t13787.yaml
 
 jobs:
   checkout:
